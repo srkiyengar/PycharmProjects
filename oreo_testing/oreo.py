@@ -19,7 +19,7 @@ def compute_yaw_pitch_from_vector(uvector):
     pitch = np.degrees(np.arccos(rz))
     rxy = np.sqrt(rx * rx + ry * ry)
     if rxy != 0:
-        yaw = np.degrees(np.arccos(rx / rxy))
+        yaw = np.degrees(np.arcsin(ry/rxy))
     else:
         yaw = 0
     return (yaw, pitch)
@@ -373,10 +373,10 @@ class Oreo_Robot(object):
         pos[5] = 0.015
         pos[6] = 0.013
         '''
-        pos[3] = -0.017 #-0.014
-        pos[4] = -0.017 #-0.015
-        pos[5] = 0.035 #-0.022
-        pos[6] = 0.020 #-0.016
+        pos[3] = -0.0170896#-0.017, -0.014
+        pos[4] = -0.0156#-0.017, -0.015
+        #pos[5] = 0.1766523#0.035, -0.022
+        #pos[6] = -0.00883694#0.020, -0.016
 
         if self.k == 0:
             print("Actuator Positions = {}".format(pos))
@@ -540,27 +540,34 @@ class Oreo_Robot(object):
 
     def look_at_point(self,x,y,z):
         look_at_point = np.array([x,y,z])
+
         idx1 = self.jointDict["left_eye_joint"]
         left_eye_origin = self.initPosOrn[idx1][self.POS_IDX]
+
         lefteye_vector = look_at_point-left_eye_origin
         lefteye_uvector = lefteye_vector/np.linalg.norm(lefteye_vector)
+
         yaw_lefteye, pitch_lefteye = compute_yaw_pitch_from_vector(lefteye_uvector)
-        left_actuator_pos_lefteye = self.left_eye_interpolator_left(yaw_lefteye, pitch_lefteye)
-        right_actuator_pos_lefteye = self.left_eye_interpolator_right(yaw_lefteye, pitch_lefteye)
 
         idx2 = self.jointDict["right_eye_joint"]
         right_eye_origin = self.initPosOrn[idx2][self.POS_IDX]
+
         righteye_vector = look_at_point-right_eye_origin
         righteye_uvector = righteye_vector/np.linalg.norm(righteye_vector)
+
         yaw_righteye, pitch_righteye = compute_yaw_pitch_from_vector(righteye_uvector)
-        left_actuator_pos_righteye = self.left_eye_interpolator_left(yaw_righteye, pitch_righteye)
-        right_actuator_pos_righteye = self.left_eye_interpolator_right(yaw_righteye, pitch_righteye)
+
+        left_actuator_pos_lefteye = self.left_eye_interpolator_left(yaw_lefteye, pitch_lefteye)
+        right_actuator_pos_lefteye = self.left_eye_interpolator_right(yaw_lefteye, pitch_lefteye)
+
+        left_actuator_pos_righteye = self.right_eye_interpolator_left(yaw_righteye, pitch_righteye)
+        right_actuator_pos_righteye = self.right_eye_interpolator_right(yaw_righteye, pitch_righteye)
 
         pos = [0] * self.actJointNum
-        pos[3] = left_actuator_pos_lefteye
-        pos[4] = right_actuator_pos_lefteye
-        pos[5] = left_actuator_pos_righteye
-        pos[6] = right_actuator_pos_righteye
+        pos[3] = left_actuator_pos_lefteye.tolist()[0]
+        pos[4] = right_actuator_pos_lefteye.tolist()[0]
+        pos[5] = left_actuator_pos_righteye.tolist()[0]
+        pos[6] = right_actuator_pos_righteye.tolist()[0]
         self.ControlActJoints(pos)
         self.actJointPos = pos
         time.sleep(0.1)

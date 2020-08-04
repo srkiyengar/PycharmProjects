@@ -12,18 +12,22 @@ if __name__ == "__main__":
     print(robot.GetJointNames())
     robot.InitManCtrl()
     robot.RegKeyEvent(['c', 'q', 'p'])
+
     a = robot.read_oreo_yaw_pitch_actuator_data()
     if a == 0:
         print("Building scan data takes minutes ....")
         robot.build_oreo_scan_yaw_pitch_actuator_data()
     robot.produce_interpolators()
     k = 0
+
     while (1):
         #robot.UpdManCtrl()
         #robot.UpdManCtrl_new()
+
         if k == 0:
-            robot.look_at_point(0.50,0,0)
+            robot.look_at_point(0.50,0.4,0.50)
             k = 1
+
         keys = robot.GetKeyEvents()
         if 'c' in keys:
             robot.CheckAllCollisions()

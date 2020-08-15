@@ -5,11 +5,36 @@ import numpy as np
 import quaternion
 import pickle
 from scipy import interpolate
+import sys
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
+yaw_lower_limit = -27.0
+yaw_upper_limit = 41.0
+pitch_lower_limit = 48.0
+pitch_upper_limit = 128
 
-import cv2
-
-
+def is_within_limits(angles):
+    # angles is a tuple in the order yaw_lefteye, pitch_lefteye, yaw_righteye, pitch_righteye
+    global yaw_lower_limit, yaw_upper_limit, pitch_lower_limit, pitch_upper_limit
+    if yaw_lower_limit <= angles[0] <= yaw_upper_limit:
+        if pitch_lower_limit <= angles[1] <= pitch_upper_limit:
+            if yaw_lower_limit <= angles[2] <= yaw_upper_limit:
+                if pitch_lower_limit <= angles[3] <= pitch_upper_limit:
+                    print("$$$$$ All angle within limits")
+                    return True
+                else:
+                    print("*** Not within limits - Righteye Pitch = {} ".format(angles[3]))
+                    return False
+            else:
+                print("*** Not within limits - Righteye yaw = {}".format(angles[2]))
+                return False
+        else:
+            print("*** Not within limits - Lefteye Pitch = {}".format(angles[1]))
+            return False
+    else:
+        print("*** Not within limits - Lefteye yaw = {}".format(angles[0]))
+        return False
 
 def compute_yaw_pitch_from_vector(uvector):
     rx = uvector[0]
@@ -145,6 +170,9 @@ class Oreo_Robot(object):
     left_eye_interpolator_right = None      # right actuator position interpolator function for left eye
     right_eye_interpolator_left = None      # left actuator position interpolator function for right eye
     right_eye_interpolator_right = None     # right actuator position interpolator function for right eye
+
+    interpolator_pickle_file = "interp_file.pkl"
+    interp_functions = []
 
     # Constructor
     def __init__(self, enableDebug, enableGUI, urdfPath, urdfName, enableRealTime):
@@ -364,6 +392,59 @@ class Oreo_Robot(object):
 
 #****
         # Update manual control
+    def UpdManCtrl_test(self):
+
+        pos = [0] * self.actJointNum
+        for idx in range(len(self.manCtrl)):
+            pos[idx] = p.readUserDebugParameter(self.manCtrl[idx])
+
+        # printing when pos has changed
+        if pos != self.prev_pos:
+            self.prev_pos = pos.copy()
+            print("Actuator Positions = {}".format(pos))
+            self.ControlActJoints(pos)
+            self.actJointPos = pos
+            time.sleep(0.1)
+            # Left eye
+            orn_lefteye = self.GetLinkOrientationWCS("left_eye_joint")
+            # convert to numpy quaternion (w,x,y,z) w is the real part.
+            orientation_lefteye = np.quaternion(orn_lefteye[3], orn_lefteye[0], orn_lefteye[1], orn_lefteye[2])
+            my_rot_matrix_left = quaternion.as_rotation_matrix(orientation_lefteye)
+            lefteye_x_uvector = my_rot_matrix_left[:, 0]
+            ik_joint_info_lefteye = self.compute_IK_for_actuators(lefteye_x_uvector)
+
+            # Right eye
+            orn_righteye = self.GetLinkOrientationWCS("right_eye_joint")  # as a list in [x,y,z,w] order
+            # convert tonge =  numpy array quaternion (w,x,y,z) - w is the real part
+            orientation_righteye = np.quaternion(orn_righteye[3], orn_righteye[0], orn_righteye[1], orn_righteye[2])
+            my_rot_matrix_right = quaternion.as_rotation_matrix(orientation_righteye)
+            righteye_x_uvector = my_rot_matrix_right[:, 0]
+            ik_joint_info_righteye = self.compute_IK_for_actuators(righteye_x_uvector)
+
+            points = p.getContactPoints()
+            if len(points) != 0:
+                print("Collision for {}".format(pos))
+            else:
+                print(" No collision".format(pos))
+
+    def compute_IK_for_actuators(self, uvector):
+        v1 = np.array(uvector)
+        v2 = np.array([1.0, 0.0, 0.0])
+        # my_axis is v1 cross v2
+        my_axis = np.array([0.0, -uvector[2], uvector[1]])
+        my_angle = np.arccos(np.dot(v1, v2))
+        my_axis_angle = my_angle * my_axis
+        my_rot_quat = (quaternion.as_float_array(quaternion.from_rotation_vector(my_axis_angle))).tolist()
+        quat_pybullet = my_rot_quat[1:]
+        quat_pybullet.append(my_rot_quat[0])
+        idx1 = self.jointDict["left_eye_joint"]
+        my_joints = p.calculateInverseKinematics(self.linkage, idx1, self.initPosOrn[idx1][self.POS_IDX],
+                                                 quat_pybullet)
+        return my_joints
+
+        # ****
+
+    # Update manual control
     def UpdManCtrl_new(self):
 
         pos = [0] * self.actJointNum
@@ -373,10 +454,10 @@ class Oreo_Robot(object):
         pos[5] = 0.015
         pos[6] = 0.013
         '''
-        pos[3] = -0.0170896#-0.017, -0.014
-        pos[4] = -0.0156#-0.017, -0.015
-        #pos[5] = 0.1766523#0.035, -0.022
-        #pos[6] = -0.00883694#0.020, -0.016
+        pos[3] = -0.0170896  # -0.017, -0.014
+        pos[4] = -0.0156  # -0.017, -0.015
+        # pos[5] = 0.1766523#0.035, -0.022
+        # pos[6] = -0.00883694#0.020, -0.016
 
         if self.k == 0:
             print("Actuator Positions = {}".format(pos))
@@ -389,12 +470,12 @@ class Oreo_Robot(object):
             orientation_lefteye = np.quaternion(orn_lefteye[3], orn_lefteye[0], orn_lefteye[1], orn_lefteye[2])
             my_axis_angle_lefteye = quaternion.as_rotation_vector(orientation_lefteye)
             rotation_angle_lefteye = np.linalg.norm(my_axis_angle_lefteye)
-            rotation_axis_lefteye = my_axis_angle_lefteye/rotation_angle_lefteye
+            rotation_axis_lefteye = my_axis_angle_lefteye / rotation_angle_lefteye
             my_angles_left = np.degrees(quaternion.as_spherical_coords(orientation_lefteye))
             my_rot_matrix_left = quaternion.as_rotation_matrix(orientation_lefteye)
 
             # Right eye
-            orn_righteye = self.GetLinkOrientationWCS("right_eye_joint") # as a list in [x,y,z,w] order
+            orn_righteye = self.GetLinkOrientationWCS("right_eye_joint")  # as a list in [x,y,z,w] order
             # convert tonge =  numpy array quaternion (w,x,y,z) - w is the real part
             orientation_righteye = np.quaternion(orn_righteye[3], orn_righteye[0], orn_righteye[1], orn_righteye[2])
             my_axis_angle_righteye = quaternion.as_rotation_vector(orientation_righteye)
@@ -403,7 +484,7 @@ class Oreo_Robot(object):
             my_angles_right = np.degrees(quaternion.as_spherical_coords(orientation_righteye))
             my_rot_matrix_right = quaternion.as_rotation_matrix(orientation_righteye)
 
-            print("UpdManCtrl_new: Right Angles {} - Left angles {}".format(my_angles_right,my_angles_left))
+            print("UpdManCtrl_new: Right Angles {} - Left angles {}".format(my_angles_right, my_angles_left))
             points = p.getContactPoints()
             if len(points) != 0:
                 print("Collision for {}")
@@ -412,7 +493,37 @@ class Oreo_Robot(object):
 
             self.k = 1
 
-# final_pose
+    ##
+            # Update manual control
+    def move_eyes_to_pos(self,new_pos):
+        pos = [0] * self.actJointNum
+        pos[3] = new_pos[0]
+        pos[4] = new_pos[1]
+        pos[5] = new_pos[2]
+        pos[6] = new_pos[3]
+
+        print("Move Eyes To Position: Actuator Positions = {}".format(pos))
+        self.ControlActJoints(pos)
+        self.actJointPos = pos
+        time.sleep(0.1)
+        collide = len(p.getContactPoints())
+        orn_lefteye = self.GetLinkOrientationWCS("left_eye_joint")
+        # convert to numpy quaternion (w,x,y,z) w is the real part.
+        orientation_lefteye = np.quaternion(orn_lefteye[3], orn_lefteye[0], orn_lefteye[1], orn_lefteye[2])
+        my_rot_matrix_left = quaternion.as_rotation_matrix(orientation_lefteye)
+        yp1 = compute_yaw_pitch_from_vector(my_rot_matrix_left[:, 0])
+        # Right eye
+        orn_righteye = self.GetLinkOrientationWCS("right_eye_joint")  # as a list in [x,y,z,w] order
+        # convert to numpy array quaternion (w,x,y,z) - w is the real part
+        orientation_righteye = np.quaternion(orn_righteye[3], orn_righteye[0], orn_righteye[1],
+                                             orn_righteye[2])
+        my_rot_matrix_right = quaternion.as_rotation_matrix(orientation_righteye)
+        yp2 = compute_yaw_pitch_from_vector(my_rot_matrix_right[:, 0])
+        print("Move Eyes To Position: Left Eye Angles {} - Right Eye angles {} collision {}".format(yp1, yp2,collide))
+
+    ##
+
+    # final_pose
     def final_pose(self):
         if 50 >self.k>=1:
             orn_lefteye = self.GetLinkOrientationWCS("left_eye_joint")
@@ -456,43 +567,110 @@ class Oreo_Robot(object):
         total_count = 0
         contact_count = 0
         contactless_count = 0
-        if self.k == 2:
-            return
-        my_value = np.linspace(-0.1,0.1, 100)
+        my_value_l = np.linspace(-0.03,0.03, 100)
+        my_value_r = np.linspace(-0.025,0.025,100)
         my_table = []
         pos = [0] * self.actJointNum
-        if left ==3:
-            pos[5] = 0.0
-            pos[6] = 0.0
-        elif left == 5:
-            pos[3] = 0.0
-            pos[4] = 0.0
-        for left_actuator in my_value:
+        wait_time = 0.2
+        for left_actuator in my_value_l:
             pos[left] = left_actuator
-            for right_actuator in my_value:
-                total_count +=1
+            for right_actuator in my_value_r:
+                total_count += 1
                 pos[right] = right_actuator
                 self.ControlActJoints(pos)
                 self.actJointPos = pos
-                time.sleep(0.1)
+                time.sleep(wait_time)
                 # specified eye
                 eye_orientation = self.GetLinkOrientationWCS(oreo_eye)
                 # convert to numpy quaternion (w,x,y,z) w is the real part.
-                eye_orientation_quat = np.quaternion(eye_orientation[3], eye_orientation[0], eye_orientation[1], \
-                                                    eye_orientation[2])
-                my_rot_matrix_left = quaternion.as_rotation_matrix(eye_orientation_quat)
-                computed_yaw,computed_pitch = compute_yaw_pitch_from_vector(my_rot_matrix_left[:, 0])
-
+                eye_orientation_quat = np.quaternion(eye_orientation[3], eye_orientation[0],eye_orientation[1], \
+                                                     eye_orientation[2])
+                my_rot_matrix = quaternion.as_rotation_matrix(eye_orientation_quat)
+                computed_yaw, computed_pitch = compute_yaw_pitch_from_vector(my_rot_matrix[:, 0])
+                my_table.append([left_actuator, right_actuator, computed_yaw, computed_pitch])
                 if len(p.getContactPoints()) != 0:
-                    contact_count +=1
+                    contact_count += 1
                 else:
-                    contactless_count +=1
-                    my_table.append([left_actuator,right_actuator,computed_yaw,computed_pitch])
+                    contactless_count += 1
+                    my_table.append([left_actuator, right_actuator, computed_yaw, computed_pitch])
 
-        self.k += 1
         print("Total count = {}".format(total_count))
         print("Total contact less count = {}".format(contactless_count))
         print("Total contact count = {}".format(contact_count))
+        with open(oreo_eye, "w") as f:
+            for my_line in my_table:
+                f.write(("left A ={} Right A ={} Com_yaw = {} Com_pitch = {}\n".format(my_line[0], \
+                                                                    my_line[1],my_line[2],my_line[3])))
+            f.write("Total count = {}".format(total_count))
+            f.write("Total contact less count = {}".format(contactless_count))
+            f.write("Total contact count = {}".format(contact_count))
+        return my_table
+
+    # The generate_actuator_positions_test tests the effect of delay after setting control act joints
+    def generate_actuator_positions_test(self, left, right, oreo_eye):
+        # right, left are actuator pairs 3,4 or 5,6 - Right and left from oreo's perspective (not viewer)
+        # 3,4 control yaw and pitch of oreo's left eye  while 5,6 for the right eye
+        # orea_eye can be either " left_eye_joint" or "right_eye_joint"
+        total_count = 0
+        contact_count = 0
+        contactless_count = 0
+        my_value = np.linspace(-0.1,0.1, 100)
+        my_table = []
+        pos = [0] * self.actJointNum
+        temp_count = 0
+        #wait_time = 0
+        print("************ Wait_time none ***************")
+        for left_actuator in my_value:
+            if temp_count<50:
+                pos[left] = left_actuator
+                temp_inner_count = 0
+                for right_actuator in my_value:
+                    if temp_inner_count<5:
+                        repeat_loop = 0
+                        while repeat_loop < 15:
+                            total_count += 1
+                            pos[right] = right_actuator
+                            self.ControlActJoints(pos)
+                            self.actJointPos = pos
+                            #time.sleep(0.20)
+                            # specified eye
+                            eye_orientation = self.GetLinkOrientationWCS(oreo_eye)
+                            # convert to numpy quaternion (w,x,y,z) w is the real part.
+                            eye_orientation_quat = np.quaternion(eye_orientation[3], eye_orientation[0],
+                                                                 eye_orientation[1], \
+                                                                 eye_orientation[2])
+                            my_rot_matrix_left = quaternion.as_rotation_matrix(eye_orientation_quat)
+                            computed_yaw, computed_pitch = compute_yaw_pitch_from_vector(my_rot_matrix_left[:, 0])
+                            my_table.append([left_actuator, right_actuator, computed_yaw, computed_pitch])
+                            #print("left A ={} Right A ={} Com_yaw = {} Com_pitch = {}".format(left_actuator, \
+                            #                                        right_actuator,computed_yaw,computed_pitch))
+                            if len(p.getContactPoints()) != 0:
+                                contact_count += 1
+                            else:
+                                contactless_count += 1
+                                # my_table.append([left_actuator, right_actuator, computed_yaw, computed_pitch])
+
+                            repeat_loop += 1
+                        temp_inner_count +=1
+                        #print("Next Right Actuator setting ------------------------------")
+                    else:
+                        break
+
+                temp_count += 1
+                #print("Next Left Actuator setting --------------------------")
+            else:
+                break
+
+
+        print("Total count = {}".format(total_count))
+        print("Total contact less count = {}".format(contactless_count))
+        print("Total contact count = {}".format(contact_count))
+        with open("nowait_data", "w") as f:
+            for my_line in my_table:
+                f.write(("left A ={} Right A ={} Com_yaw = {} Com_pitch = {}\n".format(my_line[0], \
+                                                                    my_line[1],my_line[2],my_line[3])))
+
+        sys.exit()
         return my_table
 
     def build_oreo_scan_yaw_pitch_actuator_data(self):
@@ -518,16 +696,132 @@ class Oreo_Robot(object):
             print("Failure: Opening pickle file {}".format(self.oreo_scan_data))
             return 0
 
+    ##
+    def get_max_min_yaw_pitch_values(self):
+        my_lefteye_table = np.array(self.left_eye_scan_data)
+        x = my_lefteye_table[:, 2]  # all yaw
+        y = my_lefteye_table[:, 3]  # all pitch
+        print("Left Eye scan data Max yaw {} Min yaw {}".format(max(x), min(x)))
+        print("Left Eye scan data Max pitch {} Min pitch {}".format(max(y), min(y)))
+
+        my_righteye_table = np.array(self.right_eye_scan_data)
+        x = my_righteye_table[:, 2]  # all yaw
+        y = my_righteye_table[:, 3]  # all pitch
+        print("Right Eye scan data Max yaw {} Min yaw {}".format(max(x), min(x)))
+        print("Right Eye scan data Max pitch {} Min pitch {}".format(max(y), min(y)))
+        return
+
+    ##
+
+
+    # reads the pickled data
+    def read_interpolator_functions(self):
+        try:
+            with open(self.interpolator_pickle_file, "rb") as f:
+                my_interp = pickle.load(f)
+                # left and right eye [left_actuator,right_actuator,yaw,pitch]
+                self.left_eye_interpolator_left = my_interp[0]
+                self.left_eye_interpolator_right = my_interp[1]
+                self.right_eye_interpolator_left = my_interp[2]
+                self.right_eye_interpolator_right = my_interp[3]
+                return 1
+        except IOError as e:
+            print("Failure: Opening pickle file {}".format(self.interpolator_pickle_file))
+            return 0
+
+
     # create two interpolator functions, one for the left and the other for the right oreo eye
     def produce_interpolators(self):
         self.read_oreo_yaw_pitch_actuator_data()
+
         my_lefteye_table = np.array(self.left_eye_scan_data)
         x = my_lefteye_table[:,2]   # all yaw
         y = my_lefteye_table[:,3]   # all pitch
         z_left = my_lefteye_table[:,0]  # all left_actuator positions
         z_right = my_lefteye_table[:,1]  # all right_actuator positions
-        self.left_eye_interpolator_left = interpolate.interp2d(x,y,z_left,kind='linear')
-        self.left_eye_interpolator_right = interpolate.interp2d(x, y,z_right, kind='linear')
+        self.left_eye_interpolator_left = interpolate.interp2d(x, y, z_left, kind='linear')
+        self.left_eye_interpolator_right = interpolate.interp2d(x, y, z_right, kind='linear')
+        print("Left Eye scan data Max yaw {} Min yaw {}".format(max(x),min(x)))
+        print("Left Eye scan data Max pitch {} Min pitch {}".format(max(y), min(y)))
+
+        '''
+        # 3D surface plot to check
+        zpl = []
+        zpr = []
+        xp = []
+        yp = []
+        i = 0
+        for j,k in zip(z_left,z_right):
+            if (-0.025 < j < +0.025) and ((-0.025 < k < +0.025)):
+                xp.append(x[i])
+                yp.append(y[i])
+                zpl.append(j)
+                zpr.append(k)
+
+            i += 1
+
+
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpl, 'z', c='coral', )
+        ax1.scatter(xp, yp, zpr, 'z', c='lightblue', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Left-coral Right-blue Actuator')
+
+        # end of 3D surface plot
+        '''
+
+
+
+        #******** check
+        '''plt.plot(x, z_left, 'r.', y, z_left, 'b^')
+        plt.show()
+        plt.close()
+        
+        # 3D plot for the interpolated
+        znew_left = []
+        for xi,yi in zip(x,y):
+            zi = self.left_eye_interpolator_left(xi, yi)[0]
+            znew_left.append(zi)
+        znew_right = []
+        for xi, yi in zip(x, y):
+            zi = self.left_eye_interpolator_right(xi, yi)[0]
+            znew_right.append(zi)
+
+        zpl = []
+        zpr = []
+        xp = []
+        yp = []
+        i = 0
+        for j, k in zip(znew_left, znew_right):
+            if (-0.05 < j < +0.05) and ((-0.05 < k < +0.05)):
+                xp.append(x[i])
+                yp.append(y[i])
+                zpl.append(j)
+                zpr.append(k)
+            i += 1
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpl, 'z', c='coral', )
+        #ax1.scatter(xp, yp, zpr, 'z', c='lightblue', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Left Actuator - coral')
+        ax1.set_title("Left Eye Left Actuator")
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        #ax1.scatter(xp, yp, zpl, 'z', c='coral', )
+        ax1.scatter(xp, yp, zpr, 'z', c='lightblue', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Right Actuator - Blue')
+        ax1.set_title('Left Eye Right Actuator')
+        #end of 3D interpolated
+        '''
 
         my_righteye_table = np.array(self.right_eye_scan_data)
         x = my_righteye_table[:, 2]  # all yaw
@@ -536,32 +830,192 @@ class Oreo_Robot(object):
         z_right = my_righteye_table[:, 1]  # all right_actuator positions
         self.right_eye_interpolator_left = interpolate.interp2d(x, y, z_left, kind='linear')
         self.right_eye_interpolator_right = interpolate.interp2d(x, y, z_right, kind='linear')
+
+        print("Right Eye scan data Max yaw {} Min yaw {}".format(max(x), min(x)))
+        print("Right Eye scan data Max pitch {} Min pitch {}".format(max(y), min(y)))
+
+        '''
+        # 3D plot for the interpolated right eye
+        znew_left = []
+        for xi, yi in zip(x, y):
+            zi = self.left_eye_interpolator_left(xi, yi)[0]
+            znew_left.append(zi)
+        znew_right = []
+        for xi, yi in zip(x, y):
+            zi = self.left_eye_interpolator_right(xi, yi)[0]
+            znew_right.append(zi)
+
+        zpl = []
+        zpr = []
+        xp = []
+        yp = []
+        i = 0
+        for j, k in zip(znew_left, znew_right):
+            if (-0.05 < j < +0.05) and ((-0.05 < k < +0.05)):
+                xp.append(x[i])
+                yp.append(y[i])
+                zpl.append(j)
+                zpr.append(k)
+            i += 1
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpl, 'z', c='red', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Left Actuator - red')
+        ax1.set_title('Right Eye Left Actuator')
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpr, 'z', c='green', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Right Actuator - green')
+        ax1.set_title('Right Eye Right Actuator')
+        # end of 3D interpolated
+        '''
+        # pickle the interpolator functions
+        #interpolator_pickle_file = "interp_file"
+        interp_functions = [self.left_eye_interpolator_left, self.left_eye_interpolator_right, \
+                            self.right_eye_interpolator_left, self.right_eye_interpolator_right]
+        with open(self.interpolator_pickle_file,"wb") as f:
+            pickle.dump(interp_functions,f)
+
         return
 
-    def look_at_point(self,x,y,z):
-        look_at_point = np.array([x,y,z])
+    def plot_interpolator_functions(self):
+        #left eye
+        self.read_oreo_yaw_pitch_actuator_data()
+        my_lefteye_table = np.array(self.left_eye_scan_data)
+        x = my_lefteye_table[:, 2]  # all yaw
+        y = my_lefteye_table[:, 3]  # all pitch
+
+        z_left = []
+        for xi, yi in zip(x, y):
+            zi = self.left_eye_interpolator_left(xi, yi)[0]
+            z_left.append(zi)
+        z_right = []
+        for xi, yi in zip(x, y):
+            zi = self.left_eye_interpolator_right(xi, yi)[0]
+            z_right.append(zi)
+
+        zpl = []
+        zpr = []
+        xp = []
+        yp = []
+        i = 0
+        for j, k in zip(z_left, z_right):
+            if (-0.05 < j < +0.05) and ((-0.05 < k < +0.05)):
+                xp.append(x[i])
+                yp.append(y[i])
+                zpl.append(j)
+                zpr.append(k)
+            i += 1
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpl, 'z', c='coral', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Left Actuator - coral')
+        ax1.set_title('Left Eye Left Actuator')
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpr, 'z', c='blue', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Right Actuator - blue')
+        ax1.set_title('Left Eye Right Actuator')
+        # end of left eye
+
+        #right eye
+        my_righteye_table = np.array(self.right_eye_scan_data)
+        x = my_righteye_table[:, 2]  # all yaw
+        y = my_righteye_table[:, 3]  # all pitch
+
+        z_left = []
+        for xi, yi in zip(x, y):
+            zi = self.right_eye_interpolator_left(xi, yi)[0]
+            z_left.append(zi)
+        z_right = []
+        for xi, yi in zip(x, y):
+            zi = self.right_eye_interpolator_right(xi, yi)[0]
+            z_right.append(zi)
+
+        zpl = []
+        zpr = []
+        xp = []
+        yp = []
+        i = 0
+        for j, k in zip(z_left, z_right):
+            if (-0.05 < j < +0.05) and ((-0.05 < k < +0.05)):
+                xp.append(x[i])
+                yp.append(y[i])
+                zpl.append(j)
+                zpr.append(k)
+            i += 1
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpl, 'z', c='red', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Left Actuator - red')
+        ax1.set_title('Right Eye Left Actuator')
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111, projection='3d')
+        ax1.scatter(xp, yp, zpr, 'z', c='green', )
+        ax1.set_xlabel('Yaw in degrees')
+        ax1.set_ylabel('Pitch in degrees')
+        ax1.set_zlabel('Right Actuator - green')
+        ax1.set_title('Right Eye Right Actuator')
+        # end of 3D interpolated
+        return
+
+    def compute_yaw_pitch_for_given_point(self, given_p):
+        print("computing yaw, pitch for point x = {}, y = {}, z = {} ".format(given_p[0], given_p[1], given_p[2]))
+        the_point = np.array(given_p)
 
         idx1 = self.jointDict["left_eye_joint"]
         left_eye_origin = self.initPosOrn[idx1][self.POS_IDX]
 
-        lefteye_vector = look_at_point-left_eye_origin
-        lefteye_uvector = lefteye_vector/np.linalg.norm(lefteye_vector)
-
-        yaw_lefteye, pitch_lefteye = compute_yaw_pitch_from_vector(lefteye_uvector)
+        lefteye_vector = the_point - left_eye_origin
+        lefteye_uvector = lefteye_vector / np.linalg.norm(lefteye_vector)
+        y_lefteye, p_lefteye = compute_yaw_pitch_from_vector(lefteye_uvector)
 
         idx2 = self.jointDict["right_eye_joint"]
         right_eye_origin = self.initPosOrn[idx2][self.POS_IDX]
 
-        righteye_vector = look_at_point-right_eye_origin
-        righteye_uvector = righteye_vector/np.linalg.norm(righteye_vector)
+        righteye_vector = the_point - right_eye_origin
+        righteye_uvector = righteye_vector / np.linalg.norm(righteye_vector)
+        y_righteye, p_righteye = compute_yaw_pitch_from_vector(righteye_uvector)
 
-        yaw_righteye, pitch_righteye = compute_yaw_pitch_from_vector(righteye_uvector)
+        return y_lefteye, p_lefteye, y_righteye, p_righteye
 
-        left_actuator_pos_lefteye = self.left_eye_interpolator_left(yaw_lefteye, pitch_lefteye)
-        right_actuator_pos_lefteye = self.left_eye_interpolator_right(yaw_lefteye, pitch_lefteye)
+    def get_actuator_positions_for_a_given_yaw_pitch(self,my_angles):
+        if (self.left_eye_interpolator_left is None or self.left_eye_interpolator_right is None or \
+            self.right_eye_interpolator_left is None or self.right_eye_interpolator_right is None):
+            return [0, 0.0,0.0,0.0,0.0] # 0 followed by 4 floats
 
-        left_actuator_pos_righteye = self.right_eye_interpolator_left(yaw_righteye, pitch_righteye)
-        right_actuator_pos_righteye = self.right_eye_interpolator_right(yaw_righteye, pitch_righteye)
+        left_actuator_pos_lefteye = self.left_eye_interpolator_left(my_angles[0], my_angles[1])[0]
+        right_actuator_pos_lefteye = self.left_eye_interpolator_right(my_angles[0], my_angles[1])[0]
+
+        left_actuator_pos_righteye = self.right_eye_interpolator_left(my_angles[2], my_angles[3])[0]
+        right_actuator_pos_righteye = self.right_eye_interpolator_right(my_angles[2], my_angles[3])[0]
+        return[1, left_actuator_pos_lefteye, right_actuator_pos_lefteye, left_actuator_pos_righteye,
+               right_actuator_pos_righteye]
+
+    def look_at_point(self, point_data):
+        point_angles = point_data[3]
+
+        left_actuator_pos_lefteye = self.left_eye_interpolator_left(point_angles[0], point_angles[1])
+        right_actuator_pos_lefteye = self.left_eye_interpolator_right(point_angles[0], point_angles[1])
+
+        left_actuator_pos_righteye = self.right_eye_interpolator_left(point_angles[2], point_angles[3])
+        right_actuator_pos_righteye = self.right_eye_interpolator_right(point_angles[2], point_angles[3])
 
         pos = [0] * self.actJointNum
         pos[3] = left_actuator_pos_lefteye.tolist()[0]
@@ -570,12 +1024,70 @@ class Oreo_Robot(object):
         pos[6] = right_actuator_pos_righteye.tolist()[0]
         self.ControlActJoints(pos)
         self.actJointPos = pos
+        collision = len(p.getContactPoints())
         time.sleep(0.1)
-        print("looking at point {}".format(look_at_point))
+        print("Looking at point {}".format(point_data[0:3]))
+        print("Acutuator positions Left Eye (L and R) {} and Right eye (L and R) {}".format(pos[3:5], pos[5:]))
+        if collision != 0:
+            print("BAM!!! - There is collision")
+        else:
+            print("No collision")
 
+        my_pose = self.get_yaw_and_pitch_from_orientation()
+        print("Left Eye Yaw expected {} - Yaw obtained {}".format(point_angles[0], my_pose[0]))
+        print("Left Eye Pitch expected {} - Pitch obtained {}".format(point_angles[1], my_pose[1]))
+        print("Right Eye Yaw expected {} - Yaw obtained {}".format(point_angles[2], my_pose[2]))
+        print("Right Eye Pitch expected {} - Pitch obtained {}".format(point_angles[3], my_pose[3]))
+        print("-----------------------------------------------")
 
+    def get_yaw_and_pitch_from_orientation(self):
+        eye_orientation = self.GetLinkOrientationWCS("left_eye_joint")
+        # convert to numpy quaternion (w,x,y,z) w is the real part.
+        eye_orientation_quat = np.quaternion(eye_orientation[3], eye_orientation[0], eye_orientation[1],
+                                             eye_orientation[2])
+        my_rot_matrix_left = quaternion.as_rotation_matrix(eye_orientation_quat)
+        lefteye_yaw, lefteye_pitch = compute_yaw_pitch_from_vector(my_rot_matrix_left[:, 0])
 
+        eye_orientation = self.GetLinkOrientationWCS("right_eye_joint")
+        # convert to numpy quaternion (w,x,y,z) w is the real part.
+        eye_orientation_quat = np.quaternion(eye_orientation[3], eye_orientation[0], eye_orientation[1],
+                                             eye_orientation[2])
+        my_rot_matrix_right = quaternion.as_rotation_matrix(eye_orientation_quat)
+        righteye_yaw, righteye_pitch = compute_yaw_pitch_from_vector(my_rot_matrix_right[:, 0])
 
+        return lefteye_yaw, lefteye_pitch, righteye_yaw, righteye_pitch
+
+    def compare_actuator_values(self):
+        # Values that created the interpolators
+        my_lefteye_table = np.array(self.left_eye_scan_data)
+        xl = my_lefteye_table[:, 2]  # all yaw
+        yl = my_lefteye_table[:, 3]  # all pitch
+        zl_left = my_lefteye_table[:, 0]  # all left_actuator positions
+        zl_right = my_lefteye_table[:, 1]  # all right_actuator positions
+        my_righteye_table = np.array(self.right_eye_scan_data)
+        xr = my_righteye_table[:, 2]  # all yaw
+        yr = my_righteye_table[:, 3]  # all pitch
+        zr_left = my_righteye_table[:, 0]  # all left_actuator positions
+        zr_right = my_righteye_table[:, 1]  # all right_actuator positions
+
+        left_actuator_lefteye = self.left_eye_interpolator_left(xl, yl)
+        right_actuator_lefteye = self.left_eye_interpolator_right(xl, yl)
+
+        left_actuator_righteye = self.right_eye_interpolator_left(xr, yr)
+        right_actuator_righteye = self.right_eye_interpolator_right(xr, yr)
+
+        i = len(xl)
+        j = 0
+        while i > j:
+            print("Input  Left Eye - Left {} Right {}".format(xl[j], yl[j]))
+            print("Output Left Eye - Left {} Right {}".format(left_actuator_lefteye[j], right_actuator_lefteye[j]))
+            j += 1
+
+        i = len(xr)
+        while i > 0:
+            print("Input  Right Eye - Left {} Right {}".format(xr[i], yr[i]))
+            print("Output Right Eye - Left {} Right {}".format(left_actuator_righteye, right_actuator_righteye))
+            print("---------------------------------------------------")
 
     # Initialize robot model
     def InitModel(self):
@@ -623,7 +1135,6 @@ class Oreo_Robot(object):
 
         # Rajan
         self.prev_pos = [0] * self.actJointNum
-
 
         # Create list of spherical joints
         self.spherJointIds = [self.jointDict[spher_name] for spher_name in self.spherJointNames]
@@ -678,6 +1189,7 @@ class Oreo_Robot(object):
     def CheckCollision(self, linkA, linkB):
         points = p.getContactPoints(bodyA=self.linkage, bodyB=self.linkage, linkIndexA=self.jointDict[linkA],
                                     linkIndexB=self.jointDict[linkB])
+
         if not points:
             logging.debug("No collision points between %s & %s detected\n", linkA, linkB)
             return False
@@ -696,7 +1208,7 @@ class Oreo_Robot(object):
         print()
         print()
 
-        # Get list of keys pressed
+    # Get list of keys pressed
 
     def GetKeyEvents(self):
         pressed = []
@@ -707,7 +1219,7 @@ class Oreo_Robot(object):
                 pressed.append(char)
         return pressed
 
-        # Add key to listen
+    # Add key to listen
 
     def RegKeyEvent(self, userIn):
         if isinstance(userIn, str):
@@ -725,6 +1237,7 @@ class Oreo_Robot(object):
     # Reset robot
     def Reset(self):
         p.resetSimulation()
+
         self.InitModel()
 
     # Get list of joint names
@@ -738,6 +1251,7 @@ class Oreo_Robot(object):
     # Print constraint reaction forces
     def PrintConstraintDynamics(self):
         logging.debug("Constraint States")
+
         for cons_id in self.constraintDict:
             logging.debug(p.getConstraintState(self.constraintDict[cons_id]))
         print()
@@ -746,15 +1260,17 @@ class Oreo_Robot(object):
     # Update link velo
     def UpdateAllLinkAccel(self):
         id_list = list(range(p.getNumJoints(self.linkage)))
+
         ret = p.getLinkStates(self.linkage, id_list, computeLinkVelocity=1)
         idx = 0
         for state in ret:
             self.linkVelo[idx] = [list(state[6]), list(state[7])]
             idx += 1
 
-    # Print link approx accel at last time step
-    def PrintLinkAccel(self):
-        logging.info("Link Dynamics")
+        # Print link approx accel at last time step
+        def PrintLinkAccel(self):
+            logging.info("Link Dynamics")
+
         id_list = list(range(p.getNumJoints(self.linkage)))
         ret = p.getLinkStates(self.linkage, id_list, computeLinkVelocity=1)
         idx = 0
@@ -770,9 +1286,10 @@ class Oreo_Robot(object):
         print()
         print()
 
-        # Compute approx accelerations of the link at last time step
+    # Compute approx accelerations of the link at last time step
 
     def GetLinkAccel(self, name):
+
         # check if given link name (link == joint)
         if "link" in name:
             name.replace("link", "joint", 1)
@@ -795,6 +1312,7 @@ class Oreo_Robot(object):
 
     # Get the position and orientation
     def GetLinkPosOrn(self, name):
+
         # check if given link name (link == joint)
         if "link" in name:
             name.replace("link", "joint", 1)
@@ -805,13 +1323,14 @@ class Oreo_Robot(object):
             pos = list(np.array(state[4]) - np.array(self.initPosOrn[idx][self.POS_IDX]))
             # orn = np.array(state[5]) - self.initPosOrn[idx][self.ORN_IDX]
             orn = p.getDifferenceQuaternion(self.initPosOrn[idx][self.ORN_IDX], state[5])
-            #logging.debug("%s pos=%s orn=%s", name, str(pos), str(p.getEulerFromQuaternion(orn)))
+            # logging.debug("%s pos=%s orn=%s", name, str(pos), str(p.getEulerFromQuaternion(orn)))
         else:
             logging.error("Unknown name input to GetLinkPosOrn")
             return []
         return [pos, orn]
 
     def GetLinkOrientationWCS(self, name):
+
         # check if given link name (link == joint)
         if "link" in name:
             name.replace("link", "joint", 1)

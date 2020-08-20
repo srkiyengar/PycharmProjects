@@ -11,6 +11,7 @@ import attr
 @attr.s(auto_attribs=True, slots=True)
 class SixDOFPose(object):
     r"""Specifies a position with 6 degrees of freedom
+
     :property position: xyz position
     :property rotation: unit quaternion rotation
     """
@@ -28,6 +29,7 @@ from habitat_sim.utils.common import (
 
 def rotation_to_new_point(my_coordinates, current_direction):
     '''
+
     :param my_coordinates: x,y,z coordinate of the point where the camera should point
     Rotate the camera from its current direction to the new direction
     :param current_direction: unit vector corresponding to current direction as a list in the forward direction
@@ -123,10 +125,12 @@ if __name__ == "__main__":
     backend_cfg.scene.id = (
         "/Users/rajan/My_Replica/replica_v1/room_2/habitat/mesh_semantic.ply"
     )
+    
     '''
     backend_cfg.scene.id = (
         "/Users/rajan/My_Replica/replica_v1/room_2/mesh.ply"
     )
+
     # Tie the backend of the simulator and a list of agent configurations
     my_Configuration = habitat_sim.Configuration(backend_cfg, [my_agent_config])
     # When Simulator is called the agent configuration becomes Agents (only one agent in our case]
@@ -136,6 +140,8 @@ if __name__ == "__main__":
     my_agent_state = my_agent.get_state()
     print("Agent orientation = {}".format(my_agent_state.rotation))
     print("Agent-Left RGB Sensor orientation = {}".format(my_agent_state.sensor_states['left_rgb_sensor'].rotation))
+    print("Agent-Right RGB Sensor orientation = {}".format(my_agent_state.sensor_states['right_rgb_sensor'].rotation))
+
     #my_agent_state.rotation = np.quaternion(0.9659258,0.0,0.258819,0.0)  # (w, x,y,z) Ry(30) for agent
     #my_vector = forward_vector_from_quaternion(my_agent_state.sensor_states['left_rgb_sensor'].rotation)
     #my_agent_state.sensor_states['left_rgb_sensor'].rotation = np.quaternion(0.7071068,0.0,0.7071068,0.0) # Ry(90)
@@ -145,8 +151,42 @@ if __name__ == "__main__":
     #my_agent_state = my_agent.get_state()
     #print("Agent orientation = {}".format(my_agent_state.rotation))
     #print("Agent-Left RGB Sensor orientation = {}".format(my_agent_state.sensor_states['left_rgb_sensor'].rotation))
+
     my_agent_state.sensor_states['right_rgb_sensor'].rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-    my_agent_state.sensor_states['depth_sensor'].rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+    my_agent_state.sensor_states['left_rgb_sensor'].rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+
+    d = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+    my_agent_state.rotation = d
+    my_agent.set_state(my_agent_state)
+
+    '''
+    # just an image
+    for _, sensor in my_sim._sensors.items():
+        sensor.draw_observation()
+
+    observations = {}
+    for sensor_uuid, sensor in my_sim._sensors.items():
+        observations[sensor_uuid] = sensor.get_observation()
+    rgb_left = observations["left_rgb_sensor"]
+    rgb_right = observations["right_rgb_sensor"]
+    depth = observations["depth_sensor"]
+
+    if len(rgb_left.shape) > 2:
+        rgb_left = rgb_left[..., 0:3][..., ::-1]
+    if len(rgb_right.shape) > 2:
+        rgb_right = rgb_right[..., 0:3][..., ::-1]
+    depth = np.clip(depth, 0, 10)
+    depth /= 10.0
+    stereo_pair = np.concatenate([rgb_left, rgb_right], axis=1)
+    cv2.imshow("stereo_pair", stereo_pair)
+
+    while (True):
+        k = cv2.waitKey(0)
+        if k == ord('q'):
+            break
+
+    sys.exit()
+
     for i in list(range(9)):
         rot_v = [0.0, i*np.pi/4.0, 0.0]
         print(rot_v)
@@ -175,22 +215,32 @@ if __name__ == "__main__":
         cv2.imshow("stereo_pair", stereo_pair)
         cv2.imshow("depth",depth)
         k = cv2.waitKey(0)
-
-
-    for i in list(range(9)):
+    '''
+    my_list = list(range(9))
+    for i in my_list:
         rot_v = [0.0, i*np.pi/4.0, 0.0]
-        print(rot_v)
+        print("Setting Agent rotation to {}".format(rot_v))
         d = quaternion.from_rotation_vector([0.0, i*np.pi/4.0, 0.0])
         my_agent_state.rotation = d
+        #e = quaternion.from_rotation_vector([0.0, np.pi/16, 0.0])
+        #f = quaternion.from_rotation_vector([0.0, -np.pi/16, 0.0])
+        #my_agent_state.sensor_states['left_rgb_sensor'].rotation = d
+        #my_agent_state.sensor_states['right_rgb_sensor'].rotation = d
         my_agent.set_state(my_agent_state)
-        ang = quaternion.as_rotation_vector(my_agent_state.sensor_states['left_rgb_sensor'].rotation)
-        print("Agent-Left RGB Sensor orientation = {}".format(ang))
+        my_agent_state = my_agent.get_state()
+        left_ang = quaternion.as_rotation_vector(my_agent_state.sensor_states['left_rgb_sensor'].rotation)
+        right_ang = quaternion.as_rotation_vector(my_agent_state.sensor_states['right_rgb_sensor'].rotation)
+        print("Agent-Left RGB Sensor orientation = {}".format(left_ang))
+        print("Agent-Right RGB Sensor orientation = {}".format(right_ang))
+        print("Agent orientation = {}".format(my_agent_state.rotation))
+
         for _, sensor in my_sim._sensors.items():
             sensor.draw_observation()
 
         observations = {}
         for sensor_uuid, sensor in my_sim._sensors.items():
             observations[sensor_uuid] = sensor.get_observation()
+
         rgb_left = observations["left_rgb_sensor"]
         rgb_right = observations["right_rgb_sensor"]
         depth = observations["depth_sensor"]
@@ -207,3 +257,7 @@ if __name__ == "__main__":
         if k == ord('q'):
             break
     a = "end"
+
+
+
+

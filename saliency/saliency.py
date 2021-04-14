@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import os
 
 
-fname = "./saliency_map/skokloster-castle--2.saliency"
-my_scene_info = "./saliency_map/skokloster-castle--2"
+fname = "./saliency_map/apartment_1--0.saliency"
+my_scene_info = "./saliency_map/apartment_1--0"
 '''
 fname = "./saliency_map/van-gogh-room--0.saliency"
 my_scene_info = "./saliency_map/van-gogh-room--0"

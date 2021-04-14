@@ -18,9 +18,10 @@ import matplotlib.image as matimage
 eye_separation = 0.058
 sensor_resolution = [512,512]
 #sensor_resolution = [256,256]
-scene = "../multi_agent/data_files/skokloster-castle.glb"
+#scene = "../multi_agent/data_files/skokloster-castle.glb"
+
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
-#scene = "../multi_agent/data_files/van-gogh-room.glb"
+scene = "../multi_agent/data_files/apartment_1.glb"
 
 
 def homogenous_transform(R, vect):
@@ -782,7 +783,7 @@ if __name__ == "__main__":
     left = 1
     right = 1
     salinfofile = \
-        "/Users/rajan/PycharmProjects/saliency/saliency_map/skokloster-castle--0-salicency-info"
+        "/Users/rajan/PycharmProjects/saliency/saliency_map/apartment_1--0-salicency-info"
     try:
         with open(salinfofile, "rb") as f:
             sal_info = pickle.load(f)

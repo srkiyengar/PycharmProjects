@@ -7,11 +7,10 @@ import oreo
 from PIL import Image
 import os
 import pickle
-import time
 from datetime import datetime
+import saliency
 
-import matplotlib.pyplot as plt
-import matplotlib.image as matimage
+
 
 
 
@@ -21,8 +20,8 @@ sensor_resolution = [512,512]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
-scene = "../multi_agent/data_files/apartment_1.glb"
-
+scene = "../multi_agent/data_files/van-gogh-room.glb"
+p_salfile = "/Users/rajan/PycharmProjects/saliency/saliency_map/van-gogh-room.glb^2021-05-09-22-37-sal-processed"
 
 def homogenous_transform(R, vect):
     """
@@ -285,10 +284,10 @@ class agent_oreo(object):
         # HabitatAI api agent rotation is not rotation of agent wrt to WCS followed by rotation of head/neck
         self.agent_head_neck_rotation = np.quaternion(1,0,0,0)
 
-        self.counter = 0  # counter for saccade file numbering
-        self.filename = self.create_unique_filename(scene)
+        #self.counter = 0  # counter for saccade file numbering
+        # self.filename = self.create_unique_filename(scene)
         self.my_images = self.get_sensor_observations()
-        self.current_saved_image = "empty"
+        self.start_image = "empty"    #The start image for saliency processing
         return
 
     def reset_state(self):
@@ -299,23 +298,29 @@ class agent_oreo(object):
 
 
     def get_current_state(self):
+        return self.agent.get_state()
+
+
+    def get_current_state_with_head_neck_rotation(self):
         my_state = []
         my_state.append(self.get_agent_sensor_position_orientations())
         my_state.append(self.agent_head_neck_rotation)
         return my_state
 
-    def restore_state(self,new_state):
-        current_agent_state = self.agent.get_state()
-        current_agent_state.rotation = new_state[0][0]
-        current_agent_state.position = new_state[0][1]
-        current_agent_state.sensor_states["left_rgb_sensor"].rotation = new_state[0][2]
-        current_agent_state.sensor_states["right_rgb_sensor"].rotation = new_state[0][3]
 
-        if self.num_sensors == 3:
-            current_agent_state.sensor_states["depth_sensor"].rotation = new_state[0][4]
+    def setup_agent_state(self,new_state):
+        new_agent_state = self.agent.get_state()
+        new_agent_state.rotation = new_state[0]
+        new_agent_state.position = new_state[1]
+        new_agent_state.sensor_states["left_rgb_sensor"].rotation = new_state[2]
+        new_agent_state.sensor_states["right_rgb_sensor"].rotation = new_state[3]
+        return new_agent_state
 
-        self.agent.set_state(current_agent_state, infer_sensor_states=False)
-        self.agent_head_neck_rotation = new_state[1]
+
+    def restore_state(self,new_astate):
+        self.agent.set_state(new_astate, infer_sensor_states=False)
+        self.my_images = self.get_sensor_observations()
+
 
     def create_unique_filename(self, scene_file):
         ''':scene_file - The scene for habitat
@@ -323,15 +328,17 @@ class agent_oreo(object):
         and intial agent orientation. This can be used in combination with the counter to create a
         numbered sequence of image files.'''
 
-        '''
-        file_prefix = str(datetime.now())[:16]
-        file_prefix = file_prefix.replace(" ", "-")
-        file_prefix = file_prefix.replace(":", "-")
-        '''
+
+        file_postfix = str(datetime.now())[:16]
+        file_postfix = file_postfix.replace(" ", "-")
+        file_postfix = file_postfix.replace(":", "-")
+
         head, scene_name = os.path.split(scene_file)
+        '''
         d = scene_name.find(".")
         if d != -1:
             scene_name = scene_name[0:d]
+        '''
         '''
         initial_orn = quaternion.as_float_array(self.initial_agent_state.rotation)
         val1 = '_' + str(initial_orn[0])+ "-" + str(initial_orn[1]) + "-" + str(initial_orn[3]) \
@@ -340,7 +347,7 @@ class agent_oreo(object):
         val2= str(initial_pos[0]) + "-" + str(initial_pos[1]) + "-" + str(initial_pos[2])
         my_file = file_prefix + "-" + scene_name + val1 + '_' + val2 + "--"
         '''
-        my_file = scene_name + "--"
+        my_file = dest_folder + "/" + scene_name + "^"+ file_postfix
         return my_file
 
     def get_agent_sensor_position_orientations(self):
@@ -674,41 +681,101 @@ class agent_oreo(object):
             return rgb_left, rgb_right
 
 
-    def save_view(self, new_location):
-        '''It saves right, left and depth images, if new_location = 1 '''
+    def save_both_views(self,image_filename):
 
-        if new_location == 1:
-            output = []
-            a = self.get_agent_sensor_position_orientations()
-            output.append(a[0])  # Agent orn
-            output.append(a[1])  # Agent position
-            output.append(self.agent_head_neck_rotation)
-            output.append(a[2])  # lefteye orientation
-            output.append(a[3])  # righteye orientation
-            # sensor res. hfov, focal distance - same for left, right and depth
-            output.append(self.left_sensor.resolution)
-            output.append(self.left_sensor_hfov)
-            output.append(self.focal_distance)
-            output.append(self.my_images)
+        output = []
+        a = self.get_agent_sensor_position_orientations()
+        output.append(a[0])  # Agent orn
+        output.append(a[1])  # Agent position
+        output.append(self.agent_head_neck_rotation)
+        output.append(a[2])  # lefteye orientation
+        output.append(a[3])  # righteye orientation
+        # sensor res. hfov, focal distance - same for left, right and depth
+        output.append(self.left_sensor.resolution)
+        output.append(self.left_sensor_hfov)
+        output.append(self.focal_distance)
+        output.append(self.my_images)
 
-            rgb_eye = self.destination + '/' + self.filename + str(self.counter)
-            try:
-                with open(rgb_eye, "wb") as f:
-                    pickle.dump(output, f)
-                    self.counter += 1
-                    self.current_saved_image = rgb_eye
-                    print(f"Saved Image file{rgb_eye}")
-            except IOError as e:
-                print(f"Failure: To open/write image and data file {rgb_eye}")
-                return 0
-            return 1
-        else:
-            print(f" Eye position unchanged - image and data file not saved")
+        try:
+            with open(image_filename, "wb") as f:
+                pickle.dump(output, f)
+                self.start_image = image_filename
+                print(f"Saved Image file {image_filename}")
+        except IOError as e:
+            print(f"Failure: To open/write image and data file {image_filename}")
             return 0
+        return 1
+
+    def capture_start_image_for_saliency(self):
+        self.my_images = self.get_sensor_observations()
+        new_file = self.create_unique_filename(self.backend_cfg.scene_id)
+        self.save_both_views(new_file)
+
+    def capture_images_for_salpoints(self, processed_salfile):
+
+        robot_current_state = self.get_current_state()      # saving the current robot state
+        # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
+        _, scene_name = os.path.split(self.backend_cfg.scene_id)
+        _, scenename_salfile = os.path.split(processed_salfile)
+        d = scenename_salfile.find("^")
+        if d == -1:
+            print(f"The saliency file name {scenename_salfile} is missing the ^ char")
+            print(f"Not capturing images from salient saccade points")
+            return None
+        else:
+            if scene_name != scenename_salfile[0:d]:
+                print(f"Saliency file {scenename_salfile} does not belong to scene {scene_name}")
+                return None
+            else:
+                salpoint_data = saliency.get_salpoints(processed_salfile)
+                if salpoint_data is None:
+                    return None
+                else:
+                    start_image_agent_state = self.setup_agent_state\
+                        ([salpoint_data[0],salpoint_data[1], salpoint_data[4], salpoint_data[7]])
+                    # cycle through salient points in salpoint_data for all points for both images and generate
+                    image_list_left = []
+                    for i in salpoint_data[5]:  # Left eye image
+                        oreo_in_habitat.restore_state(start_image_agent_state)
+                        new_x = i[0]
+                        new_y = i[1]
+                        success = oreo_in_habitat.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        if success == 1:
+                            aorn, apos, l_sensor_orn, _ = oreo_in_habitat.get_agent_sensor_position_orientations()
+                            val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, l_sensor_orn,
+                                   oreo_in_habitat.my_images[0]]
+                            image_list_left.append([i, val])
+                        else:
+                            image_list_left.append([i, None])
+
+                    image_list_right = []
+                    for i in salpoint_data[8]:  # right eye image
+                        oreo_in_habitat.restore_state(start_image_agent_state)
+                        new_x = i[0]
+                        new_y = i[1]
+                        success = oreo_in_habitat.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        if success == 1:
+                            aorn, apos, _, r_sensor_orn = oreo_in_habitat.get_agent_sensor_position_orientations()
+                            val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, r_sensor_orn,
+                                   oreo_in_habitat.my_images[1]]
+                            image_list_right.append([i, val])
+                        else:
+                            image_list_right.append([i, None])
+
+                    output = [image_list_left,image_list_right]
+                    image_filename = processed_salfile + "-images"
+                    self.restore_state(robot_current_state)
+                    try:
+                        with open(image_filename, "wb") as f:
+                            pickle.dump(output, f)
+                            return output
+                    except IOError as e:
+                        print(f"Failure: To open/write image and data file {image_filename}")
+                        return None
 
 
-    def get_current_saved_image_filename(self):
-        return self.current_saved_image
+    def get_start_image_filename(self):
+        return self.start_image
 
 
 class OreoPyBulletSim(object):
@@ -776,110 +843,64 @@ if __name__ == "__main__":
     oreo_in_habitat = agent_oreo(scene, dest_folder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/3,0.0])
-    delta_ang_cw = quaternion.from_rotation_vector([0.0, -2*np.pi/3, 0.0])
+    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/30,0.0])
+    delta_ang_cw = quaternion.from_rotation_vector([0.0, -2*np.pi/30, 0.0])
     w = sensor_resolution[0]
     h = sensor_resolution[1]
     left = 1
     right = 1
-    salinfofile = \
-        "/Users/rajan/PycharmProjects/saliency/saliency_map/apartment_1--0-salicency-info"
-    try:
-        with open(salinfofile, "rb") as f:
-            sal_info = pickle.load(f)
-    except IOError as e:
-        print(f"Failure: Loading pickle file {salinfofile}")
-        exit(1)
-    start_state = oreo_in_habitat.get_current_state()
-    save_state_0 = 1
-    previous_state = "first state"
+
     while (1):
         display_image(oreo_in_habitat.my_images)
         k = cv2.waitKey(0)
         if k == ord('q'):
             break
         elif k == ord("0"):
-            print(f"Restoring starting position orinentation of oreo")
-            oreo_in_habitat.restore_state(start_state)
-            oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
-            if save_state_0 == 1:
-                oreo_in_habitat.save_view(1)
-                save_state_0 = 0
-            current_state = "state 0"
-            print(f"Current state = {current_state}")
-        elif k == ord('1'):
-            new_x = sal_info[1][1][2]
-            new_y = sal_info[1][1][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 1"
-            print(f"Current state = {current_state}")
-        elif k == ord('2'):
-            new_x = sal_info[1][2][2]
-            new_y = sal_info[1][2][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 2"
-            print(f"Current state = {current_state}")
-        elif k == ord('3'):
-            new_x = sal_info[1][3][2]
-            new_y = sal_info[1][3][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 3"
-            print(f"Current state = {current_state}")
-        elif k == ord('4'):
-            new_x = sal_info[1][4][2]
-            new_y = sal_info[1][4][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 4"
-            print(f"Current state = {current_state}")
-        elif k == ord('5'):
-            new_x = sal_info[1][5][2]
-            new_y = sal_info[1][5][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 5"
-            print(f"Current state = {current_state}")
-        elif k == ord('6'):
-            new_x = sal_info[1][6][2]
-            new_y = sal_info[1][6][3]
-            print(f"eye fixation on ({new_x},{new_y})")
-            success = oreo_in_habitat.saccade_to_new_point(new_x,new_y,new_x,new_y,pybullet_sim)
-            oreo_in_habitat.save_view(success)
-            current_state = "state 6"
-            print(f"Current state = {current_state}")
+            oreo_in_habitat.capture_start_image_for_saliency()
+            continue
+        elif k == ord("1"):
+            #take the processed saliency file to capture salient images and related information
+            related_images = oreo_in_habitat.capture_images_for_salpoints(p_salfile)
+            continue
+        elif k == ord('n'):
+            oreo_in_habitat.reset_state()
+            continue
         elif k == ord('f'):
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, -delta_move])
+            continue
         elif k == ord('b'):
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, delta_move])
+            continue
+        elif k == ord('u'):
+            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, delta_move, 0.0])
+            continue
+        elif k == ord('v'):
+            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, -delta_move, 0.0])
+            continue
         elif k == ord('j'):
             # default agent position is 0.9539339  0.1917877 12.163067
             m = [0.9539339, 0.1917877, 11.0]
             oreo_in_habitat.move_and_rotate_agent(ang_quat, m, "absolute")
-        elif k == ord('n'):
-            oreo_in_habitat.reset_state()
+            continue
+
         elif k == ord('a'):
             oreo_in_habitat.move_and_rotate_agent(delta_ang_cw, [0.0,0.0,0.0])
+            continue
         elif k == ord('c'):
             oreo_in_habitat.move_and_rotate_agent(delta_ang_ccw, [0.0, 0.0, 0.0])
+            continue
         elif k == ord('8'):
             #oreo_in_habitat.reset_state()
             dc = oreo_in_habitat.compute_uvector_for_image_point(w/4, h/4)
             rot_quat = calculate_rotation_to_new_direction(dc)
             oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat,rot_quat,rot_quat])
+            continue
         elif k == ord('9'):
             #oreo_in_habitat.reset_state()
             dc = oreo_in_habitat.compute_uvector_for_image_point(3*w/4, 3*h/4)
             rot_quat = calculate_rotation_to_new_direction(dc)
             oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat,rot_quat,rot_quat])
-
+            continue
         elif k == ord('e'):
             oreo_in_habitat.reset_state()
             dc = oreo_in_habitat.compute_uvector_for_image_point(0, h/2)
@@ -888,42 +909,47 @@ if __name__ == "__main__":
             next_quat = rot_quat * a
             print(f"Quaternion {rot_quat} at 0,h/2, next quat {next_quat}, a ={a}")
             oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+            continue
         elif k == ord('w'):
             oreo_in_habitat.reset_state()
             dc = oreo_in_habitat.compute_uvector_for_image_point(w, h/2)
             rot_quat = calculate_rotation_to_new_direction(dc)
             print(f"Quaternion {rot_quat} at w,h/2")
             oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+            continue
         elif k == ord('z'):
             oreo_in_habitat.saccade_to_new_point((w/2)+8,(h/2)+8,w/2,h/2, pybullet_sim)
+            continue
         elif k == ord('p'):
             oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2, pybullet_sim)
+            continue
         elif k == ord('l'):
             print(f"Move Left count --{left}--")
             xL = (w/2)-8
             yL = h/2
             oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL, pybullet_sim)
             left += 1
+            continue
         elif k == ord('r'):
             print(f"Move Right count --{right}-")
             right  += 1
             oreo_in_habitat.saccade_to_new_point((w/2)+8,h/2,(w/2)+8,h/2, pybullet_sim)
-        elif k == ord('u'):
-            oreo_in_habitat.saccade_to_new_point(w/2,(h/2)-8, w/2, (h/2)-8, pybullet_sim)
+            continue
         elif k == ord('d'):
             oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8, pybullet_sim)
+            continue
         elif k == ord('y'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,15*np.pi/180,0]),
                                              pybullet_sim)
-        elif k == ord('v'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,-15*np.pi/180,0]),
-                                             pybullet_sim)
+            continue
         elif k == ord('g'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([15*np.pi/180,0,0]),
                                              pybullet_sim)
+            continue
         elif k == ord('h'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-15*np.pi/180,0,0]),
                                              pybullet_sim)
+            continue
         else:
             pass
 

@@ -9,7 +9,6 @@ import random
 
 
 
-
 def read_file(myfilename):
     try:
         with open(myfilename, "rb") as f:

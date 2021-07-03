@@ -381,7 +381,6 @@ class process_image(object):
             self.reduced_sal_pointsR = reduced_sal_points
 
 
-
     def save_all(self):
         '''
         After processing, call this to save a -sal-processed file which contains both images, salicency heat maps,

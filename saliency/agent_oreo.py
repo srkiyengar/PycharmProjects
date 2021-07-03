@@ -590,7 +590,6 @@ class agent_oreo(object):
         :param oreo_pyb_sim: An Oreo_Pybullet_Sim object that can confirm the eye head movements
         :return: 1 and rotates the sensor if it is within range or a 0
         """
-
         my_agent_state = self.agent.get_state()
         r1 = my_agent_state.rotation  # Agent rotation wrt Habitat frame
         t1 = my_agent_state.position  # Agent translation wrt Habitat frame

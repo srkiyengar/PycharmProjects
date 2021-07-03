@@ -21,7 +21,7 @@ sensor_resolution = [512,512]
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
 scene = "../multi_agent/data_files/van-gogh-room.glb"
-p_salfile = "/Users/rajan/PycharmProjects/saliency/saliency_map/van-gogh-room.glb^2021-05-09-22-37-sal-processed"
+
 
 def homogenous_transform(R, vect):
     """
@@ -287,7 +287,7 @@ class agent_oreo(object):
         #self.counter = 0  # counter for saccade file numbering
         # self.filename = self.create_unique_filename(scene)
         self.my_images = self.get_sensor_observations()
-        self.start_image = "empty"    #The start image for saliency processing
+        self.start_image_filename = "empty"    #The start image for saliency processing
         return
 
     def reset_state(self):
@@ -328,8 +328,8 @@ class agent_oreo(object):
         and intial agent orientation. This can be used in combination with the counter to create a
         numbered sequence of image files.'''
 
-
-        file_postfix = str(datetime.now())[:16]
+        date_string = datetime.now()
+        file_postfix = str(date_string)[:19]       # filename will be different by seconds.
         file_postfix = file_postfix.replace(" ", "-")
         file_postfix = file_postfix.replace(":", "-")
 
@@ -583,10 +583,10 @@ class agent_oreo(object):
     def saccade_to_new_point(self, xLeft, yLeft, xRight, yRight, oreo_pyb_sim):
         """
 
-        :param xLeft: Left sensor x position in pixels of a sensor frame with 0,0 at top left
-        :param yLeft: Left sesnor y position in pixels of a sensor frame with 0,0 at top left
-        :param xRight: Right Sensor x position in pixels of a sensor frame with 0,0 at top left
-        :param yRight: Right Sensor y position in pixels of a sensor frame with 0,0 at top left
+        :param xLeft: x position in pixels of Left sensor frame with 0,0 at top left
+        :param yLeft: y position in pixels of Left sensor frame with 0,0 at top left
+        :param xRight: x position in pixels of Right Sensor frame with 0,0 at top left
+        :param yRight: y position in pixels of Right Sensor frame with 0,0 at top left
         :param oreo_pyb_sim: An Oreo_Pybullet_Sim object that can confirm the eye head movements
         :return: 1 and rotates the sensor if it is within range or a 0
         """
@@ -699,7 +699,7 @@ class agent_oreo(object):
         try:
             with open(image_filename, "wb") as f:
                 pickle.dump(output, f)
-                self.start_image = image_filename
+                self.start_image_filename = image_filename
                 print(f"Saved Image file {image_filename}")
         except IOError as e:
             print(f"Failure: To open/write image and data file {image_filename}")
@@ -728,6 +728,8 @@ class agent_oreo(object):
                 return None
             else:
                 salpoint_data = saliency.get_salpoints(processed_salfile)
+                # salpoint_data is a list  = [agent orientation, agent Position, robot_head_neck_rotation,
+                # left_image, lefteye Rotation, list of x,y points, right_image, righteye Rotation, list of x,y points]
                 if salpoint_data is None:
                     return None
                 else:
@@ -735,7 +737,7 @@ class agent_oreo(object):
                         ([salpoint_data[0],salpoint_data[1], salpoint_data[4], salpoint_data[7]])
                     # cycle through salient points in salpoint_data for all points for both images and generate
                     image_list_left = []
-                    for i in salpoint_data[5]:  # Left eye image
+                    for i in salpoint_data[5]:  # salient point from Left eye image salient points
                         oreo_in_habitat.restore_state(start_image_agent_state)
                         new_x = i[0]
                         new_y = i[1]
@@ -775,7 +777,7 @@ class agent_oreo(object):
 
 
     def get_start_image_filename(self):
-        return self.start_image
+        return self.start_image_filename
 
 
 class OreoPyBulletSim(object):
@@ -860,7 +862,12 @@ if __name__ == "__main__":
             continue
         elif k == ord("1"):
             #take the processed saliency file to capture salient images and related information
-            related_images = oreo_in_habitat.capture_images_for_salpoints(p_salfile)
+            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+            for root, dirs, files in os.walk(processed_dir):
+                for filename in files:
+                    if "-sal-processed" in filename:
+                        p_salfile = processed_dir + filename
+                        related_images = oreo_in_habitat.capture_images_for_salpoints(p_salfile)
             continue
         elif k == ord('n'):
             oreo_in_habitat.reset_state()
@@ -876,6 +883,12 @@ if __name__ == "__main__":
             continue
         elif k == ord('v'):
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, -delta_move, 0.0])
+            continue
+        elif k == ord('s'):
+            oreo_in_habitat.move_and_rotate_agent(ang_quat, [delta_move, 0.0, 0.0])
+            continue
+        elif k == ord('t'):
+            oreo_in_habitat.move_and_rotate_agent(ang_quat, [-delta_move, 0.0, 0.0])
             continue
         elif k == ord('j'):
             # default agent position is 0.9539339  0.1917877 12.163067
@@ -939,15 +952,19 @@ if __name__ == "__main__":
             oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8, pybullet_sim)
             continue
         elif k == ord('y'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,15*np.pi/180,0]),
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,5*np.pi/180,0]),
+                                             pybullet_sim)
+            continue
+        elif k == ord('x'):
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5*np.pi/180, 0]),
                                              pybullet_sim)
             continue
         elif k == ord('g'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([15*np.pi/180,0,0]),
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5*np.pi/180,0,0]),
                                              pybullet_sim)
             continue
         elif k == ord('h'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-15*np.pi/180,0,0]),
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5*np.pi/180,0,0]),
                                              pybullet_sim)
             continue
         else:

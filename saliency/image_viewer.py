@@ -21,7 +21,15 @@ def read_file(myfilename):
 class image_set(object):
 
     def __init__(self,start_image):
+        self.start_imagefile = start_image
+        self.start_image_salfile = start_image + "-sal"
+        self.start_image_fixation_file = self.start_image_salfile + "-processed"
+        self.fixation_images_file = self.start_image_salfile + "-images"
+        self.fixation_images_salfile = self.fixation_images_file + "-sal-emsemble"
 
+    def view_start_image(self):
+        image_data = read_file(self.start_imagefile)
+        pass
 
     def view_start_image_and_salmap(self):
         data_from_salfile = read_file(self.start_image_fixation_file)
@@ -46,13 +54,41 @@ class image_set(object):
         axes[1, 1].imshow(start_imageR, alpha=0.2)
         n = axes[1, 1].matshow((start_image_salmapR), alpha=0.5, cmap=plt.cm.RdBu)
         fig.colorbar(n, ax=axes[1, 1])
-        axes[1, 1].matshow((start_imageR), alpha=0.5, cmap=plt.cm.RdBu)
+        axes[1, 1].matshow((start_imageR), alpha=0.2, cmap=plt.cm.RdBu)
         axes[1, 0].axis('off')
         axes[1, 1].axis('off')
         plt.show()
 
-    def view_sal_points(self):
+    def view_fixation_points(self):
         data_from_processed_file = read_file(self.start_image_fixation_file)
+        salmap_with_fixationsL = data_from_processed_file[3][0]
+        salmap_with_fixationsR = data_from_processed_file[3][1]
+        start_imageL = data_from_processed_file[0][0]
+        start_imageR = data_from_processed_file[0][1]
+        start_image_salmapL = data_from_processed_file[1][0]
+        start_image_salmapR = data_from_processed_file[1][1]
+
+        rows = 2
+        cols = 2
+        fig, axes = plt.subplots(rows, cols)
+        fig.suptitle('Saliency map with fixations')
+
+        axes[0,0].imshow(start_imageL, alpha=0.2)
+        axes[0,0].matshow((start_image_salmapL), alpha=0.5, cmap=plt.cm.RdBu)
+        #axes[0, 1].imshow(start_imageL, alpha=0.2)
+        #axes[0, 1].matshow((salmap_with_fixationsL), alpha=0.8, cmap=plt.cm.RdBu)
+        axes[0,1].imshow(salmap_with_fixationsL, alpha=0.8)
+        axes[0,1].matshow((start_imageL), alpha=0.2, cmap=plt.cm.RdBu)
+
+        axes[1,0].imshow(start_imageR, alpha=0.2)
+        axes[1,0].matshow((start_image_salmapR), alpha=0.5, cmap=plt.cm.RdBu)
+        axes[1,1].imshow(salmap_with_fixationsR, alpha=0.8)
+        axes[1,1].matshow((start_imageR), alpha=0.2, cmap=plt.cm.RdBu)
+        axes[0,0].axis('off')
+        axes[0,1].axis('off')
+        axes[1,0].axis('off')
+        axes[1,1].axis('off')
+        plt.show()
 
 
 def write_file(myfilename,output):
@@ -64,13 +100,14 @@ def write_file(myfilename,output):
     except IOError as e:
         print(f"Failure: To open/write file {myfilename}")
 
-starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-06-26-12-08-00"
+starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-04-12-19-02"
 
 if __name__ == "__main__":
 
     my_set = image_set(starting_point_image)
     my_set.view_start_image_and_salmap()
-
+    #my_set.view_start_image()
+    my_set.view_fixation_points()
 
 
 

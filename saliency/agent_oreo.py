@@ -14,7 +14,8 @@ import saliency
 
 
 
-eye_separation = 0.058
+#eye_separation = 0.058
+eye_separation = 0.2
 sensor_resolution = [512,512]
 #sensor_resolution = [256,256]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
@@ -110,6 +111,7 @@ def compute_eye_saccade_from_PyBframe(eye_rot):
 def display_image(images, left=True, right=False):
 
     a = len(images)
+
     if a == 2:
         if left:
             cv2.imshow("Left_eye",images[0])
@@ -529,8 +531,8 @@ class agent_oreo(object):
         corr_h = new_h1.dot(h1_inv)         # Matrix multiplication is associative
 
         h2_left = homogenous_transform(quaternion.as_rotation_matrix(
-            my_agent_state.sensor_states["right_rgb_sensor"].rotation),(my_agent_state.sensor_states[
-            "right_rgb_sensor"].position).tolist())
+            my_agent_state.sensor_states["left_rgb_sensor"].rotation),(my_agent_state.sensor_states[
+            "left_rgb_sensor"].position).tolist())
         s_left = corr_h.dot(h2_left)
         my_agent_state.sensor_states["left_rgb_sensor"].rotation = quaternion.from_rotation_matrix(s_left[0:3,0:3])
         my_agent_state.sensor_states["left_rgb_sensor"].position = s_left[0:3, 3].T

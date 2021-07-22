@@ -105,7 +105,16 @@ def scale_image(some_image, new_max = 150):
 
 
 def find_max_and_index(array_2d):
-    #result = np.where(array_2d == np.amax(array_2d))
+    '''
+    :param array_2d: is a saliency map .
+    :type array_2d: ndarray of rows x columns
+    :return: maximum value, its row, and its column
+    :rtype: tuple
+    np.max returns the maximum value in array_2d and the == operator on array_2d produces a boolean ndarray and the
+    non-zero returns two arrays which provide the row, col values of the occurance of max value. I am taking the first
+    r,c location and running with it.
+    '''
+
     result = np.nonzero(array_2d == np.amax(array_2d))
     r = result[0][0]
     c = result[1][0]
@@ -114,12 +123,23 @@ def find_max_and_index(array_2d):
 
 def get_salpoints(processed_sal_file):
     '''
-    :parameter processed_sal_file - A processed saliency file, name ending with "-sal-processed".
-    It would contain a maximum of 10 salient points identified in the saliency heat map.
-    This function can be used to read such a file.
+    :parameter processed_sal_file, file name ending with "-sal-processed" contains the following information
+    0 = [imageL, imageR]
+    1 = [salmapL, salmapR]
+    2 = [reduced_salmapL, reduced_salmapR]
+    3 = [recreated_salmapL, recreated_salmapR]
+    4 = [center_pointsL, center_pointsR]
+    5 = focal_distance
+    6 = agent_orn
+    7 = agent_pos
+    8 = [lefteye rotation, righteye rotation]
+    9 = robot_head_neck_rotation
+
     :returns agent orientation, agent Position, robot_head_neck_rotation,
     left_image, lefteye Rotation, list of x,y points, right_image, righteye Rotation, list of x,y points
+
     '''
+
     try:
         with open(processed_sal_file, "rb") as f:
             saldata = pickle.load(f)
@@ -187,8 +207,8 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
         # convert to top left origin
         xn = math.floor(xval + w)
         yn = math.floor(h - yval)
-        #if xn <= width and yn <= height:    # logic is suspect;
-        if 0 <= xn <= width and 0<= yn <= height:  # logic is suspect;
+        #if xn <= width and yn <= height:    # logic is suspect; replaced
+        if 0 <= xn <= width and 0<= yn <= height:
             pos = (xn, yn)
             #combo = (i, pos)
             new_list.append(pos)
@@ -229,8 +249,8 @@ class process_image(object):
             7 - focal_distance
             8 - images[0 = left, 1 = right, 2 = depth optionally set]
         '''
-        self.imageL = scene_data[8][0][:, :, ::-1]  # Left image
-        self.imageR = scene_data[8][1][:, :, ::-1]  # Right image
+        self.imageL = scene_data[8][0]  # Left image RGB
+        self.imageR = scene_data[8][1]  # Right image RGB
         self.lefteye = scene_data[3]    # Left sensor rotation
         self.righteye = scene_data[4]   # right sensor rotation
         self.agent_orn = scene_data[0]  # Agent orn
@@ -755,8 +775,8 @@ class fixation_comparison(object):
         return avg_tuple, std_tuple
 
 
-image_info_file = "./saliency_map/van-gogh-room.glb^2021-06-22-21-23-41"
-salmap_file = "./saliency_map/van-gogh-room.glb^2021-06-22-21-23-41-sal"
+image_info_file = "./saliency_map/results/van-gogh-room.glb^2021-07-04-14-23-07"
+salmap_file = "./saliency_map/results/van-gogh-room.glb^2021-07-04-14-23-07-sal"
 
 if __name__ == "__main__":
 
@@ -764,9 +784,9 @@ if __name__ == "__main__":
     my_sal_object = process_image(image_info_file, my_block=16, total_points=10, pixel_max=150)
     my_sal_object.load_salmap(salval[0])
     my_sal_object.load_salmap(salval[1], "right")
-    my_salfile = my_sal_object.save_salmap()
+    #my_salfile = my_sal_object.save_salmap()
     my_sal_object.process_saliency()
-    my_sal_object.save_all()
+    #my_sal_object.save_all()
     fig = plt.figure(figsize=(8, 8))
     r1c1 = fig.add_subplot(2, 2, 1)
     r1c2 = fig.add_subplot(2, 2, 2)
@@ -778,14 +798,15 @@ if __name__ == "__main__":
     r2c2.imshow(my_sal_object.recreated_salmapL)
     plt.show()
 
-    image_ensemble = "./saliency_map/van-gogh-room.glb^2021-05-09-22-47-sal-processed-images"
+    image_ensemble = "./saliency_map/van-gogh-room.glb^2021-07-04-14-23-07-sal-processed-images"
 
     nrow = 2
     ncol = 5
-    for root, dirs, files  in os.walk("./saliency_map/"):
+    my_dir = "./saliency_map/results/"
+    for root, dirs, files  in os.walk(my_dir):
         for filename in files:
             if "sal-processed-images" in filename and "sal-processed-images-" not in filename:
-                my_image_ensemble = sal_ensemble("./saliency_map/"+ filename)
+                my_image_ensemble = sal_ensemble(my_dir + filename)
                 l_images, r_images = my_image_ensemble.get_images()
                 fig, ax = plt.subplots(nrow, ncol)
                 for i,img in enumerate(l_images):
@@ -795,6 +816,7 @@ if __name__ == "__main__":
                     ax[x, y].set_title(my_label)
                     if img is not None:
                         ax[x,y].imshow(img)
+                        pass
 
         break
 

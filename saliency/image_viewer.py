@@ -24,11 +24,16 @@ class image_set(object):
         self.start_imagefile = start_image
         self.start_image_salfile = start_image + "-sal"
         self.start_image_fixation_file = self.start_image_salfile + "-processed"
-        self.fixation_images_file = self.start_image_salfile + "-images"
+        self.fixation_images_file = self.start_image_fixation_file + "-images"
         self.fixation_images_salfile = self.fixation_images_file + "-sal-emsemble"
 
     def view_start_image(self):
         image_data = read_file(self.start_imagefile)
+        rows = 1
+        cols = 2
+        fig, axes = plt.subplots(rows, cols)
+        axes[0].imshow(image_data[8][0])
+        axes[1].imshow(image_data[8][1])
         pass
 
     def view_start_image_and_salmap(self):
@@ -43,18 +48,20 @@ class image_set(object):
         fig.suptitle('Start Image and Saliency map')
 
         axes[0, 0].imshow(start_imageL)
-        axes[0, 1].imshow(start_imageL, alpha=0.2)
+        #axes[0, 1].imshow(start_imageL, alpha=0.2)
         m = axes[0, 1].matshow((start_image_salmapL), alpha=0.5, cmap=plt.cm.RdBu)
-        fig.colorbar(m, ax=axes[0, 1])
         axes[0, 1].matshow(start_imageL, alpha=0.2, cmap=plt.cm.RdBu)
+        fig.colorbar(m, ax=axes[0, 1])
+
         axes[0, 0].axis('off')
         axes[0, 1].axis('off')
 
         axes[1, 0].imshow(start_imageR)
-        axes[1, 1].imshow(start_imageR, alpha=0.2)
+        #axes[1, 1].imshow(start_imageR, alpha=0.2)
         n = axes[1, 1].matshow((start_image_salmapR), alpha=0.5, cmap=plt.cm.RdBu)
-        fig.colorbar(n, ax=axes[1, 1])
         axes[1, 1].matshow((start_imageR), alpha=0.2, cmap=plt.cm.RdBu)
+        fig.colorbar(n, ax=axes[1, 1])
+
         axes[1, 0].axis('off')
         axes[1, 1].axis('off')
         plt.show()
@@ -68,27 +75,54 @@ class image_set(object):
         start_image_salmapL = data_from_processed_file[1][0]
         start_image_salmapR = data_from_processed_file[1][1]
 
-        rows = 2
+        rows = 3
         cols = 2
         fig, axes = plt.subplots(rows, cols)
-        fig.suptitle('Saliency map with fixations')
+        fig.suptitle('Image, Saliency map and fixations')
 
-        axes[0,0].imshow(start_imageL, alpha=0.2)
-        axes[0,0].matshow((start_image_salmapL), alpha=0.5, cmap=plt.cm.RdBu)
-        #axes[0, 1].imshow(start_imageL, alpha=0.2)
-        #axes[0, 1].matshow((salmap_with_fixationsL), alpha=0.8, cmap=plt.cm.RdBu)
-        axes[0,1].imshow(salmap_with_fixationsL, alpha=0.8)
-        axes[0,1].matshow((start_imageL), alpha=0.2, cmap=plt.cm.RdBu)
+        axes[0, 0].imshow(start_imageL)
+        axes[1, 0].imshow(start_imageL, alpha=0.2)
+        m = axes[1, 0].matshow((start_image_salmapL), alpha=0.5, cmap=plt.cm.RdBu)
+        fig.colorbar(m, ax=axes[1, 0])
+        axes[2, 0].imshow(start_imageL, alpha=0.2)
+        axes[2, 0].matshow((salmap_with_fixationsL), alpha=0.5, cmap=plt.cm.RdBu)
 
-        axes[1,0].imshow(start_imageR, alpha=0.2)
-        axes[1,0].matshow((start_image_salmapR), alpha=0.5, cmap=plt.cm.RdBu)
-        axes[1,1].imshow(salmap_with_fixationsR, alpha=0.8)
-        axes[1,1].matshow((start_imageR), alpha=0.2, cmap=plt.cm.RdBu)
-        axes[0,0].axis('off')
-        axes[0,1].axis('off')
-        axes[1,0].axis('off')
-        axes[1,1].axis('off')
+        axes[0, 1].imshow(start_imageR)
+        axes[1, 1].imshow(start_imageR, alpha=0.2)
+        n = axes[1, 1].matshow((start_image_salmapR), alpha=0.5, cmap=plt.cm.RdBu)
+        fig.colorbar(n, ax=axes[1, 1])
+        axes[2, 1].imshow(start_imageR, alpha=0.2)
+        axes[2, 1].matshow((salmap_with_fixationsR), alpha=0.5, cmap=plt.cm.RdBu)
+
+        axes[0, 0].axis('off')
+        axes[0, 1].axis('off')
+        axes[1, 0].axis('off')
+        axes[1, 1].axis('off')
+        axes[2, 0].axis('off')
+        axes[2, 1].axis('off')
         plt.show()
+
+    def view_fixation_centered_images(self, which = "right"):
+        my_ensemble = saliency.sal_ensemble(self.fixation_images_file)
+        left_images, right_images = my_ensemble.get_images()
+        if which == "left":
+            images = left_images
+        else:
+            images = right_images
+
+        rows = 2
+        cols = 5
+        fig, axes = plt.subplots(rows, cols)
+        fig.suptitle('Images from fixations')
+        for r in range(rows):
+            for c in range(cols):
+                img = images[c + r*cols]
+                if img is not None:
+                    axes[r, c].imshow(images[c + r*cols])
+                axes[r, c].axis('off')
+        plt.show()
+
+
 
 
 def write_file(myfilename,output):
@@ -100,16 +134,17 @@ def write_file(myfilename,output):
     except IOError as e:
         print(f"Failure: To open/write file {myfilename}")
 
-starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-04-12-19-02"
+starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-22-10-06-51BGR"
 
 if __name__ == "__main__":
 
     my_set = image_set(starting_point_image)
-    my_set.view_start_image_and_salmap()
-    #my_set.view_start_image()
+    my_set.view_start_image()
+    #my_set.view_start_image_and_salmap()
     my_set.view_fixation_points()
 
 
+    my_set.view_fixation_centered_images()
 
 
 

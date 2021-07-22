@@ -1077,19 +1077,19 @@ class Oreo_Robot(object):
 
         left_actuator_pos_lefteye = float(self.left_eye_interpolator_left(my_angles[0], my_angles[1]))
         if np.isnan(left_actuator_pos_lefteye):
-            print("Invalid Actuator position ll for angles{}".format(my_angles))
+            print("Invalid Actuator position left actuator of left eye for angles{}".format(my_angles))
             return failure
         right_actuator_pos_lefteye = float(self.left_eye_interpolator_right(my_angles[0], my_angles[1]))
         if np.isnan(right_actuator_pos_lefteye):
-            print("Invalid Actuator position rl for angles{}".format(my_angles))
+            print("Invalid Actuator position right actuator of left eye for angles{}".format(my_angles))
             return failure
         left_actuator_pos_righteye = float(self.right_eye_interpolator_left(my_angles[2], my_angles[3]))
         if np.isnan(left_actuator_pos_righteye):
-            print("Invalid Actuator positions lr for angles{}".format(my_angles))
+            print("Invalid Actuator positions left actuator of right eye for angles{}".format(my_angles))
             return failure
         right_actuator_pos_righteye = float(self.right_eye_interpolator_right(my_angles[2], my_angles[3]))
         if np.isnan(right_actuator_pos_righteye):
-            print("Invalid Actuator positions rr for angles{}".format(my_angles))
+            print("Invalid Actuator positions right actuator of right eye for angles{}".format(my_angles))
             return failure
 
         return[1, left_actuator_pos_lefteye, right_actuator_pos_lefteye, left_actuator_pos_righteye,

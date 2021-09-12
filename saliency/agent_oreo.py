@@ -20,8 +20,8 @@ sensor_resolution = [512,512]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
-scene = "../multi_agent/data_files/van-gogh-room.glb"
-
+#scene = "../multi_agent/data_files/van-gogh-room.glb"
+scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 def homogenous_transform(R, vect):
     """
@@ -714,6 +714,7 @@ class agent_oreo(object):
             print(f"Failure: To open/write image and data file {self.start_image_filenameRGB}")
             return 0
 
+        """
         del output[-1]
         images = self.my_images[0][..., 0:3][..., ::-1], self.my_images[1][..., 0:3][..., ::-1]
         output.append(images)
@@ -724,6 +725,7 @@ class agent_oreo(object):
         except IOError as e:
             print(f"Failure: To open/write image and data file {self.start_image_filenameBGR}")
             return 0
+        """
         return 1
 
     def capture_start_image_for_saliency(self):
@@ -799,7 +801,7 @@ class agent_oreo(object):
                         if success == 1:
                             aorn, apos, l_sensor_orn, _ = oreo_in_habitat.get_agent_sensor_position_orientations()
                             val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, l_sensor_orn,
-                                   oreo_in_habitat.my_images[0]]
+                                   oreo_in_habitat.my_images[0][..., 0:3]]
                             image_list_left.append([i, val])
                         else:
                             image_list_left.append([i, None])
@@ -813,7 +815,7 @@ class agent_oreo(object):
                         if success == 1:
                             aorn, apos, _, r_sensor_orn = oreo_in_habitat.get_agent_sensor_position_orientations()
                             val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, r_sensor_orn,
-                                   oreo_in_habitat.my_images[1]]
+                                   oreo_in_habitat.my_images[1][..., 0:3]]
                             image_list_right.append([i, val])
                         else:
                             image_list_right.append([i, None])
@@ -918,7 +920,7 @@ if __name__ == "__main__":
             continue
         elif k == ord("1"):
             #take the processed saliency file to capture salient images and related information
-            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results-skok/"
             for root, dirs, files in os.walk(processed_dir):
                 for filename in files:
                     if "-sal-processed" in filename:

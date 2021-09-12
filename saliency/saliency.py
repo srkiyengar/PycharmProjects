@@ -12,7 +12,7 @@ RGB_to_YCbCr = np.ndarray((3,3), dtype=float)
 RGB_to_YCbCr[0,:] = [0.257, 0.504, 0.098]
 RGB_to_YCbCr[1,:] = [-0.148, -0.291, 0.439]
 RGB_to_YCbCr[2,:] = [0.439, -0.368, -0.071]
-# agent_oreo.get_sensor_observation produces a ndarray 512x512x3 ordered as BGR as required by inshow
+
 
 
 ''' Processing instruction that assumes the use of colab to run Deep Gaze II.
@@ -168,26 +168,26 @@ def read_pickled_file(sfilename, filetype=" "):
         print(f"Failure: To read {filetype} file {sfilename}")
         return None
 
-def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_distance, width, height):
+def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, frame_no, focal_distance, width, height):
     '''
     Reference for rotation is Habitat World Coordinates
-    :param R1 Rotation in quaterion from WCS to previous sensor(eye) frame
-    :param R2 Rotation in quaterion from WCS to current sensor(eye) frame
-    :param pixels_in_previous_frame: List of x,y positions of pixel in the previous frame
-    :param focal_distance: the frame z coordinate is equal to -focal_distance
+    :param R1 Rotation in quaterion from WCS to previous sensor(eye) image frame
+    :param R2 Rotation in quaterion from WCS to current sensor(eye) image frame
+    :param pixels_in_previous_frame: List of r,c = (y,x) positions of pixel in the previous frame
+    :param focal_distance: the image frame z coordinate is equal to -focal_distance.
     :param width: sensor width pixels
     :param height: sensor height pixels
-    :returns List of x, y positions in the current frame
+    :returns List of r, c positions in the current frame (r = yn, c = xn) to match ndarray indexing
     '''
 
-    R = R2.inverse() * R1  # Rotation from current frame to previous frame
-    w = width / 2
-    h = height / 2
+    R = R2.inverse() * R1   # Rotation from current frame to previous frame
+    w = width / 2           # corresponds to x-axis or column
+    h = height / 2          # y-axis or row
     new_list = []
-    for i in pixels_in_previous_frame:  # i should (x,y)
+    for i in pixels_in_previous_frame:  # i should (x,y) representing width and height
         # shifting based on an origin at the center of the frame and computing the unit vector
-        x = i[0] - w
-        y = h - i[1]
+        x = i[1] - w
+        y = h - i[0]
         v = np.array([x, y, -focal_distance])
         uvector = v / np.linalg.norm(v)
 
@@ -209,12 +209,12 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
         yn = math.floor(h - yval)
         #if xn <= width and yn <= height:    # logic is suspect; replaced
         if 0 <= xn <= width and 0<= yn <= height:
-            pos = (xn, yn)
+            pos = (yn, xn)      # expressing back in row,column
             #combo = (i, pos)
             new_list.append(pos)
         else:
             new_list.append(None)
-            print(f"point {i}in old frame is outside the new frame at {xn},{yn}")
+            print(f"point {i}in old frame is outside the new frame at {yn},{xn} for frame no. {frame_no}")
     return new_list
 
 
@@ -299,7 +299,7 @@ class process_image(object):
         Use this to save the right and left saliency values from Deep Gaze II for a given right and left image pair
         '''
 
-        both_salmap = [self.salmapL, self.salmapL]
+        both_salmap = [self.salmapL, self.salmapR]
         try:
             with open(self.salmap_filename, "wb") as f:
                 pickle.dump(both_salmap, f)
@@ -463,6 +463,8 @@ class process_image(object):
     3 - Use Deep Gaze II to get the saliency maps for each. See (Get_salmap_for_images.ipynb)
     4 - Two lists of saliency maps for the left and right set of images is passed while invoking save_sal_ensemble method
     5 - save_sal_ensemble creates the -sal-processed-images-sal-ensemble
+    
+     
 '''
 
 class sal_ensemble(object):
@@ -484,6 +486,11 @@ class sal_ensemble(object):
         self.sal_ensemble_filename = results_folder + '/' + tail + "-sal-ensemble"
 
     def get_images(self):
+        '''
+        self.imgL_data is a list of [i, val] for each images where i = (r,c) and
+        val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, r_sensor_orn,
+            oreo_in_habitat.my_images[1][..., 0:3]]
+        '''
 
         left_images = []
         for i in self.imgL_data:
@@ -583,7 +590,7 @@ class fixation_comparison(object):
             else:
                 self.fixation_rotationsR.append(i[1][3])     #sensor rotation
                 self.imagesR.append(i[1][4])
-        # Now 11 images
+        # Now 11 images (self.imagesL and self.imagesR have ONE additional image, image 0 corresponding to start image
         self.imagesL.insert(0,self.start_data[0][0])         #inserting the start images to the 0th position
         self.imagesR.insert(0, self.start_data[0][1])
 
@@ -608,19 +615,19 @@ class fixation_comparison(object):
 
     def build_point_map(self):
         '''
-        It creates a n x n List of List. Each inner list is a set of pixel locations. The first list is the salient pixels
-        location from the start image. The following lists present in top left 0,0 coordinate system, the locations of
-        the salient points from the first list in each image as eye fixates in each of the salient points found in the
-        start image.
+        It creates a n x n List of List. Each inner list is a set of pixel locations. The first list is the top 10 salient pixel
+        locations from the start image. The following lists in top left 0,0 coordinate system, presents the locations of
+        the salient points from the first list in each image as eye changes its fixation to each of the salient points
+        from the start image.
         One point in each list (from 1 to 10) will have 256,256 point or close enough. This is the gaze direction for
         that image. A none list means the eye could not saccade to that point and a none value within a list means
         the point was outside the frame (h x w).
         '''
 
         self.point_mapL.append(self.fixation_pointsL)    #First list of 10 salient points from start left image
-        for i in self.fixation_rotationsL:               #10 more lists - each with new locations for the 10 sal points
-            if i is not None:
-                point_set = compute_pixel_in_current_frame(self.start_sensor_rotation[0], i, self.fixation_pointsL,
+        for i, j in enumerate(self.fixation_rotationsL):               #10 more lists - each with new locations for the 10 sal points
+            if j is not None:
+                point_set = compute_pixel_in_current_frame(self.start_sensor_rotation[0], j, self.fixation_pointsL, i,
                                                            self.focal_distance, self.salmap_dim[0], self.salmap_dim[1])
                 self.point_mapL.append(point_set)
             else:
@@ -628,9 +635,9 @@ class fixation_comparison(object):
                 self.point_mapL.append(my_list)
 
         self.point_mapR.append(self.fixation_pointsR)    #A list of 10 salient points from start right image
-        for i in self.fixation_rotationsR:
-            if i is not None:
-                point_set = compute_pixel_in_current_frame(self.start_sensor_rotation[0], i, self.fixation_pointsR,
+        for i, j in enumerate(self.fixation_rotationsR):
+            if j is not None:
+                point_set = compute_pixel_in_current_frame(self.start_sensor_rotation[0], j, self.fixation_pointsR, i,
                                                            self.focal_distance, self.salmap_dim[0], self.salmap_dim[1])
                 self.point_mapR.append(point_set)
             else:
@@ -660,7 +667,7 @@ class fixation_comparison(object):
             self.sal_vals_from_fixationsR.append(sal_values)
 
         # re-arrange to have lists of values per point
-
+        # 10 lists (one for each fixation point, each containing 11 values 1 for each image
         self.imagewise_variations_of_sal_pixelL = [[] for _ in range(len(self.fixation_pointsL))]
         self.imagewise_variations_of_sal_pixelR = [[] for _ in range(len(self.fixation_pointsR))]
 
@@ -682,6 +689,36 @@ class fixation_comparison(object):
                   f"variations of fixations{self.fixation_variations_filename}")
         return
 
+    def display_images_of_salpoint(self, image_fixation_list, sal_point, wide=6):
+        '''
+        :param image_fixation_list is list of images starting from 0 to 10 (0 is the original image)
+        :param sal_point is point 0 to 9 (10 fixation points)
+        '''
+        labels = []
+        new_list = []
+        for j in image_fixation_list:
+            if self.imagesL[j] is not None and self.point_mapL[j][sal_point] is not None:
+                new_list.append(j)
+                labels.append(f"image {j}")
+        nrow = 1
+        ncol = len(new_list)
+        fig, ax = plt.subplots(nrow, ncol)
+        fig.suptitle(f"Comparing Saliency of Fixation point {sal_point}")
+        for index, i in enumerate(new_list):
+            img = self.imagesL[i]
+            r, c = self.point_mapL[i][sal_point]
+            img[r - wide:r + wide + 1, c - wide:c + wide + 1, 0] = 255  # RGB layers in the image
+            img[r - wide:r + wide + 1, c - wide:c + wide + 1, 1] = 0
+            img[r - wide:r + wide + 1, c - wide:c + wide + 1, 2] = 255
+            ax[index].imshow(img)
+            ax[index].set_title(labels[index])
+            salval = self.imagewise_variations_of_sal_pixelL[sal_point][i]   #list of 10 each with 11 values for 11 images
+            print(f"Saliency value of fixation point {sal_point} at ({r}, {c}) is {salval}")
+            expo = int(math.log10(salval))
+            manti = salval / (10 ** expo)
+            ax[index].set_xlabel(f"({r}, {c}) = {manti:.2f}e{expo}")
+
+        plt.show()
 
     def compute_image_stats(self):
 
@@ -700,9 +737,9 @@ class fixation_comparison(object):
                 std_Cb.append(np.nan)
                 std_Cr.append(np.nan)
             else:
-                intensity = 16 + (RGB_to_YCbCr[0, 0] * image[..., 2] + RGB_to_YCbCr[0, 1] * image[..., 1] + RGB_to_YCbCr[0, 2] * image[..., 0])
-                chrome_blue = 128 + (RGB_to_YCbCr[1, 0] * image[..., 2] + RGB_to_YCbCr[1, 1] * image[..., 1] + RGB_to_YCbCr[1, 2] * image[..., 0])
-                chrome_red = 128 + (RGB_to_YCbCr[2, 0] * image[..., 2] + RGB_to_YCbCr[2, 1] * image[..., 1] + RGB_to_YCbCr[2, 2] * image[..., 0])
+                intensity = 16 + (RGB_to_YCbCr[0, 0] * image[..., 0] + RGB_to_YCbCr[0, 1] * image[..., 1] + RGB_to_YCbCr[0, 2] * image[..., 0])
+                chrome_blue = 128 + (RGB_to_YCbCr[1, 0] * image[..., 0] + RGB_to_YCbCr[1, 1] * image[..., 1] + RGB_to_YCbCr[1, 2] * image[..., 2])
+                chrome_red = 128 + (RGB_to_YCbCr[2, 0] * image[..., 0] + RGB_to_YCbCr[2, 1] * image[..., 1] + RGB_to_YCbCr[2, 2] * image[..., 2])
 
                 avg_I.append(np.average(intensity))
                 avg_Cb.append(np.average(chrome_blue))
@@ -730,9 +767,9 @@ class fixation_comparison(object):
                 std_Cb.append(np.nan)
                 std_Cr.append(np.nan)
             else:
-                intensity = 16 + (RGB_to_YCbCr[0,0]*image[...,2] + RGB_to_YCbCr[0,1]*image[...,1] + RGB_to_YCbCr[0,2]*image[...,0])
-                chrome_blue = 128 + (RGB_to_YCbCr[1,0]*image[...,2] + RGB_to_YCbCr[1,1]*image[...,1] + RGB_to_YCbCr[1,2]*image[...,0])
-                chrome_red = 128 + (RGB_to_YCbCr[2,0]*image[...,2] + RGB_to_YCbCr[2,1]*image[...,1] + RGB_to_YCbCr[2,2]*image[...,0])
+                intensity = 16 + (RGB_to_YCbCr[0,0]*image[...,0] + RGB_to_YCbCr[0,1]*image[...,1] + RGB_to_YCbCr[0,2]*image[...,2])
+                chrome_blue = 128 + (RGB_to_YCbCr[1,0]*image[...,0] + RGB_to_YCbCr[1,1]*image[...,1] + RGB_to_YCbCr[1,2]*image[...,2])
+                chrome_red = 128 + (RGB_to_YCbCr[2,0]*image[...,0] + RGB_to_YCbCr[2,1]*image[...,1] + RGB_to_YCbCr[2,2]*image[...,2])
 
                 avg_I.append(np.average(intensity))
                 avg_Cb.append(np.average(chrome_blue))
@@ -747,10 +784,51 @@ class fixation_comparison(object):
 
         return
 
+    def plot_avg_std_variations_of_images(self):
+
+        x = range(0,11,1)
+        fig, ax = plt.subplots()
+        new_list = self.imagesR_avg + self.imagesR_std
+        new_list_labels = ["Average Intensity", "Average Cb", "Average Cr", "Std. Dev. Intensity",
+                           "Std. Dev. Cb", "Std. Dev. Cr",]
+        for i, j in enumerate(new_list):
+            my_label = new_list_labels[i]
+            ax.plot(x, j, 'o-', label=my_label)
+        ax.legend()
+        ax.set_xlabel('Image Number')
+        ax.set_ylabel('Value')
+        ax.set_title('Variation over images')
+        plt.show()
+
+    def plot_fixation_saliency_wrt_image_intensity_std(self, fixation_no):
+
+        nrow = 2
+        ncol = 3
+        new_list = self.imagesR_avg + self.imagesR_std
+        new_list_labels = ["Average Intensity", "Average Cb", "Average Cr", "Std. Dev. Intensity",
+                           "Std. Dev. Cb", "Std. Dev. Cr", ]
+
+        fig, ax = plt.subplots(nrow, ncol)
+        j = self.imagewise_variations_of_sal_pixelL[fixation_no]
+        for i in range(0,nrow*ncol,1):
+            r = i // ncol
+            c = i % ncol
+            temp = zip(j, new_list[i])  # Zip pixel saliency with corresp. Image Avg
+            sorted_list = sorted(temp, key=lambda t: t[0])
+            x = []
+            y = []
+            for k in sorted_list:
+                x.append(k[0])
+                y.append(k[1])
+            ax[r, c].plot(y, x, 'o-')
+            ax[r, c].set_ylabel('Saliency')
+            ax[r, c].set_xlabel(f"{new_list_labels[i]}")
+        fig.suptitle(f"Fixation {fixation_no}")
+        plt.show()
 
     def saliency_variation_vs_image_stats(self):
         ''':returns: avg_tuple[x] compares the variation of xth salient pixel gaze to gaze wrt to avg value of the image;
-        similarly std_tupe compares the variation of xth salient pixel gaze to gaze wrt to std value of the image.
+        similarly std_tuple compares the variation of xth salient pixel gaze to gaze wrt to std value of the image.
         '''
         avg_tuple = []
         std_tuple = []
@@ -775,18 +853,300 @@ class fixation_comparison(object):
         return avg_tuple, std_tuple
 
 
-image_info_file = "./saliency_map/results/van-gogh-room.glb^2021-07-04-14-23-07"
-salmap_file = "./saliency_map/results/van-gogh-room.glb^2021-07-04-14-23-07-sal"
+class process_fixation_images(object):
+
+    '''Using the start image file, the sal-processed-images file and the -sal-ensemble file, we can
+    get the top 10 salient points for the images of the fixations arising out of the the salient points of the
+    start image.
+    '''
+
+    def __init__(self, image_filename, my_block = 16, total_points = 10, pixel_max = 150):
+
+        self.image_file = image_filename
+        self.image_file_data = read_pickled_file(image_filename, "starting image file")
+        if self.image_file_data is None:
+            exit(1)
+        file_image_ensemble = image_filename + "-sal-processed-images"
+        self.image_ensemble_data = read_pickled_file(file_image_ensemble, "Images Ensemble file")
+        if self.image_ensemble_data is None:
+            exit(1)
+        file_sal_ensemble = file_image_ensemble + "-sal-ensemble"
+        self.sal_ensemble_data = read_pickled_file(file_sal_ensemble, "Saliencies Ensemble file")
+        if self.sal_ensemble_data is None:
+            exit(1)
+
+        self.block_dim = my_block
+        self.num_points = total_points
+        self.new_max = pixel_max
+
+        self.sensor_resolution = self.image_file_data[5]
+        self.hfov = self.image_file_data[6]
+        self.focal_distance = self.image_file_data[7]
+
+        self.imageL = None  # Left image RGB
+        self.imageR = None  # Right image RGB
+        self.lefteye = None  # Left sensor rotation
+        self.righteye = None  # right sensor rotation
+        self.agent_orn = None  # Agent orn
+        self.agent_pos = None  # Agent position
+        self.robot_head_neck_rotation = None  # head-neck rotation that is buried into the Agent orn.
+
+        # Saliency - left image
+        self.salmapL = None
+        self.reduced_salmapL = None
+        self.recreated_salmapL = None
+        self.reduced_sal_pointsL = []
+        self.center_pointsL = []
+        # Saliency - right image
+        self.salmapR = None
+        self.reduced_salmapR = None
+        self.recreated_salmapR = None
+        self.reduced_sal_pointsR = []
+        self.center_pointsR = []
+
+
+
+    def load_image_and_sal_info(self, image_no):
+
+        '''
+            self.imgL_data is a list of [j, val] for each images where j = (r,c) and
+            val = [aorn, apos, agent_head_neck_rotation, r_sensor_orn,
+            rgb_image]
+        '''
+        imgL_data = self.image_ensemble_data[0]
+        imgR_data = self.image_ensemble_data[1]
+        i = imgL_data[image_no]                 # [(r,c), [aorn, apos, head_neck_rotation, r_sensor_orn, rgb_image ]
+        if i[1] is not None:
+            self.imageL = i[1][4]               # left sensor rotation
+            self.lefteye = i[1][3]
+            self.agent_orn = i[1][0]            # Agent orn
+            self.agent_pos = i[1][1]            # Agent position
+            self.robot_head_neck_rotation = i[1][2]  # head-neck rotation that is buried into the Agent orn.
+        else:
+            self.imageL = None
+            print(f"Image {image_no} from {self.image_file} is None")
+            return False
+
+        i = imgR_data[image_no]
+        if i[1] is not None:
+            self.imageR = i[1][4]
+            self.righteye = i[1][3]             # right sensor rotation
+        else:
+            self.imageR = None
+
+        self.salmapL = self.sal_ensemble_data[0][image_no]
+        self.salmapR = self.sal_ensemble_data[1][image_no]
+        if self.salmapL is None:
+            print(f"Salmap for {image_no} of {self.image_file} is None")
+            return False
+
+        return True
+
+    def process_saliency(self,image_num):
+        '''
+        :parameter image_num - 0 to 9
+        It creates reduced_salmap, recreated_salmap, and list of salient points.
+        run the load_image_and_sal_info to populate the data for many of the the object variables
+        '''
+
+        if self.load_image_and_sal_info(image_num) == False:
+            return False
+
+
+        # Macular angle is 18 out of HFOV (120); d should be 5
+        # We ignore (d-1)/2 pixels on horizontal and vertical directions of a salient pixel
+        # When dim = 16x16 for map reduction, d=5 means 2 pixels on each side, 32 pixels in 512 scale
+        # Each red. image pixel = 16 regular approximately 3.5 degrees
+
+        hfov = np.degrees(self.hfov)
+        self.d = math.ceil((18.0 * self.salmapL.shape[0]) / (hfov * self.block_dim))
+        # print(f"The dimension d = {self.d}")
+        # compute salient points list
+        f = int((self.d - 1) / 2)
+        if self.salmapL is not None:
+            self.compute_points_and_maps(f)
+        if self.salmapR is not None:
+            self.compute_points_and_maps(f, "right")
+
+        return True
+
+    def compute_points_and_maps(self, f, which_map = "left"):
+        # Macular angle is 18 out of HFOV (120); d should be 5
+        # We ignore (d-1)/2 pixels on horizontal and vertical directions of a salient pixel
+        # When dim = 16x16 for map reduction, d=5 means 2 pixels on each side, 32 pixels in 512 scale
+        # Each red. image pixel = 16 regular approximately 3.5 degrees
+
+        if which_map == "right":
+            raw_salmap = self.salmapR
+        else:
+            raw_salmap = self.salmapL
+
+        reduced_salmap = skimage.measure.block_reduce(raw_salmap, block_size=(self.block_dim,
+                                                                                      self.block_dim), func=np.amax)
+        reduced_salmap = scale_image(reduced_salmap)
+        reduced_sal_points = []
+        for i in range(self.num_points):
+            val, r, c = find_max_and_index(reduced_salmap)
+            reduced_sal_points.append((val, r, c))
+            reduced_salmap[r - f:r + f + 1, c - f:c + f + 1] = 0  # zero_around_macular_center
+
+        for i in range(self.num_points):
+            reduced_salmap[reduced_sal_points[i][1], reduced_sal_points[i][2]] = 255 - i * 10
+
+        new_sal_image = np.copy(raw_salmap)
+        vmin = new_sal_image.min()
+        vmax = new_sal_image.max()
+        recreated_salmap = (new_sal_image - vmin) * self.new_max / (vmax - vmin)
+
+        count = 0
+        center_points = []
+        for scaled_val, r, c in reduced_sal_points:
+            start_r = r * self.block_dim
+            start_c = c * self.block_dim
+            '''
+            recreated_image[start_r:start_r+block_size,start_c:start_c+block_size] = \
+                recreated_image[start_r:start_r + block_size, start_c:start_c + block_size]/2
+            '''
+            val = 255 - 10 * count
+            recreated_salmap[start_r:start_r + self.block_dim, start_c:start_c + self.block_dim] = val
+            true_val = raw_salmap[start_r + 8, start_c + 8]
+            center_points.append((true_val, scaled_val, start_r + 8, start_c + 8))
+            count += 1
+
+        if which_map == "left":
+            self.reduced_salmapL = reduced_salmap
+            self.recreated_salmapL = recreated_salmap
+            self.center_pointsL = center_points
+            self.reduced_sal_pointsL = reduced_sal_points
+
+        else:
+            self.reduced_salmapR = reduced_salmap
+            self.recreated_salmapR = recreated_salmap
+            self.center_pointsR = center_points
+            self.reduced_sal_pointsR = reduced_sal_points
+
+    def create_and_save_files_per_fixation_image(self, image_num):
+        my_path, my_fname = os.path.split(self.image_file)
+        d = my_fname.find("^")
+        if d == -1:
+            print(f"The image file name {my_fname} is missing the ^ char")
+            print(f"Not generating and saving images and saliency files for {self.image_file}")
+            return
+        else:
+            new_dir = my_path + '/' + my_fname[:6] + '-' + my_fname[d+1:]
+            if not os.path.exists(new_dir):
+                os.mkdir(new_dir)
+            img_filename = new_dir + '/' + my_fname + str(image_num)
+            sal_filename = img_filename + '-sal'
+            sal_processed_filename = sal_filename + '-processed'
+
+            # building a start image file based on the information the image [image_num] in the ensemble.
+            output = []
+            output.append(self.agent_orn)  # Agent orn
+            output.append(self.agent_pos)  # Agent position
+            output.append(self.robot_head_neck_rotation)
+            output.append(self.lefteye)  # lefteye orientation
+            output.append(self.righteye)  # righteye orientation
+            output.append(self.sensor_resolution)
+            output.append(self.hfov)
+            output.append(self.focal_distance)
+            images = self.imageL, self.imageR
+            output.append(images)  # Left and Right RGB images
+
+            try:
+                with open(img_filename, "wb") as f:
+                    pickle.dump(output, f)
+                    print(f"Saved Image file {img_filename}")
+            except IOError as e:
+                print(f"Failure: To open/write image and data file {img_filename}")
+                return 0
+
+            # creating a sal file from sal-ensemble for image [image_num]
+            both_salmap = [self.salmapL, self.salmapR]
+            try:
+                with open(sal_filename, "wb") as f:
+                    pickle.dump(both_salmap, f)
+                    print(f"Saved saliency file {sal_filename}")
+            except:
+                print(f"Failure: To open and save saliency file {sal_filename}")
+
+            #creating sal-processed file for image[image_num]
+            all = []
+            image = [self.imageL, self.imageR]
+            all.append(image)
+            salmap = [self.salmapL, self.salmapR]
+            all.append(salmap)
+            reduced_salmap = [self.reduced_salmapL, self.reduced_salmapR]
+            all.append(reduced_salmap)
+            recreated_salmap = [self.recreated_salmapL, self.recreated_salmapR]
+            all.append(recreated_salmap)
+            center_points = [self.center_pointsL, self.center_pointsR]
+            all.append(center_points)
+            all.append(self.focal_distance)
+            all.append(self.agent_orn)
+            all.append(self.agent_pos)
+            rotation = [self.lefteye, self.righteye]
+            all.append(rotation)
+            all.append(self.robot_head_neck_rotation)
+
+            try:
+                with open(sal_processed_filename, "wb") as f:
+                    pickle.dump(all, f)
+                    print(f"Saved processed saliency file {sal_processed_filename}")
+            except:
+                print(f"Failure: To save processed saliency file {sal_processed_filename}")
+
+
 
 if __name__ == "__main__":
 
-    salval = read_pickled_file(salmap_file)
+
+    image_info_file = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB"
+
+    salmap_file = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal"
+    start_processed = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed"
+    image_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images"
+    sal_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images-sal-ensemble"
+
+
+    fixation_images = process_fixation_images(image_info_file)
+
+    images_list = range(0,10,1)
+    images = []
+    images_salmap = []
+    images_salpoints = []
+    for i in images_list:
+        if fixation_images.process_saliency(i):
+            images.append(fixation_images.imageL)
+            fixation_images.create_and_save_files_per_fixation_image(i)
+            images_salmap.append(fixation_images.recreated_salmapL)
+            images_salpoints.append(fixation_images.center_pointsL)
+        else:
+            images.append(fixation_images.imageL)
+            images_salmap.append(None)
+            images_salpoints.append(None)
+    nrow = 2
+    ncol = 5
+    fig, ax = plt.subplots(nrow, ncol)
+    for i, j in enumerate(zip(images,images_salmap)):
+        x = i // ncol
+        y = i % ncol
+        ax[x, y].axis('off')
+        if j[0] is not None:
+            my_label = f"Image {i+1}"
+            ax[x, y].imshow(j[0], alpha=0.6)
+            ax[x, y].matshow((j[1]), alpha=0.5, cmap=plt.cm.RdBu)
+            ax[x, y].set_title(my_label)
+    plt.show()
+
+
     my_sal_object = process_image(image_info_file, my_block=16, total_points=10, pixel_max=150)
+    salval = read_pickled_file(salmap_file)
     my_sal_object.load_salmap(salval[0])
     my_sal_object.load_salmap(salval[1], "right")
-    #my_salfile = my_sal_object.save_salmap()
+    # my_salfile = my_sal_object.save_salmap()
     my_sal_object.process_saliency()
-    #my_sal_object.save_all()
+    # my_sal_object.save_all()
     fig = plt.figure(figsize=(8, 8))
     r1c1 = fig.add_subplot(2, 2, 1)
     r1c2 = fig.add_subplot(2, 2, 2)
@@ -797,6 +1157,126 @@ if __name__ == "__main__":
     r2c1.imshow(my_sal_object.reduced_salmapL)
     r2c2.imshow(my_sal_object.recreated_salmapL)
     plt.show()
+
+
+    my_comparison_object = fixation_comparison(start_processed, image_ensemble, sal_ensemble)
+    my_comparison_object.build_point_map()
+    my_comparison_object.compute_sal_variations()
+    my_comparison_object.compute_image_stats()
+    my_comparison_object.plot_avg_std_variations_of_images()
+    my_comparison_object.plot_fixation_saliency_wrt_image_intensity_std(0)
+    my_comparison_object.plot_fixation_saliency_wrt_image_intensity_std(1)
+    my_comparison_object.plot_fixation_saliency_wrt_image_intensity_std(2)
+
+    a, b = my_comparison_object.saliency_variation_vs_image_stats()
+
+    my_comparison_object.display_images_of_salpoint([0,1,2,3,4,10], 0)
+    #my_comparison_object.display_images_of_salpoint([5, 6, 7, 8, 9], 3)
+    #my_comparison_object.display_images_of_salpoint([1, 7, 0, 4, 10], 0)
+
+    fig, ax = plt.subplots()
+    x = range(0, 10, 1)  # 10 points from each image
+    for i, j in enumerate(my_comparison_object.sal_vals_from_fixationsL):  # j 0 - 10 for a total of 11 images
+        my_label = f"Image {i}"
+        ax.plot(x, j, 'o-', label=my_label)
+    ax.legend()
+    ax.set_xlabel('Ten Salient points from start image')
+    ax.set_ylabel('Saliency values')
+    ax.set_title('Saliency variation of 10 salient points for all fixation images')
+
+
+    fig, ax = plt.subplots()
+    x = range(0, 11, 1)  # 11 images
+    for i, j in enumerate(my_comparison_object.imagewise_variations_of_sal_pixelL):  # i 0 to 9 for a total of 10
+        my_label = f"Point {i+1} across images"
+        ax.plot(x, j, 'o-', label=my_label)
+    ax.legend()
+    ax.set_xlabel('11 Images')
+    ax.set_ylabel('Saliency values')
+    ax.set_title('Saliency variations vs fixation Images')
+
+
+
+
+
+    fig, ax = plt.subplots()
+    mylabel = f"Pixel 1 - Avg I"
+    ax.plot(a[0][0], a[0][1], label=mylabel)
+    mylabel = f"Pixel 1 - Avg Cb"
+    ax.plot(a[10][0], a[10][1], label=mylabel)
+    mylabel = f"Pixel 1 - Avg Cr"
+    ax.plot(a[20][0], a[20][1], label=mylabel)
+    ax.legend()
+    ax.set_xlabel('Avg value of Intensity')
+    ax.set_ylabel('Saliency')
+    ax.set_title('saliency vs Avg YCB for salient pixel 1')
+    plt.show()
+
+    fig, ax = plt.subplots()
+    mylabel = f"Pixel 1 - Std I"
+    ax.plot(b[0][0], b[0][1], label=mylabel)
+    mylabel = f"Pixel 1 - Std Cb"
+    ax.plot(b[10][0], b[10][1], label=mylabel)
+    mylabel = f"Pixel 1 - Std Cr"
+    ax.plot(b[20][0], b[20][1], label=mylabel)
+    ax.legend()
+    ax.set_xlabel('STD value of Intensity')
+    ax.set_ylabel('Saliency')
+    ax.set_title('saliency vs Std. YCB for salient pixel 1')
+    plt.show()
+
+    nrow = 2
+    ncol = 5
+    fig, ax = plt.subplots(nrow, ncol)
+    d = b[0:10]
+    for i, j in enumerate(d):
+        my_label = f"Saccade {i}"
+        x = i // ncol
+        y = i % ncol
+        print(f"i: {i} - x: {x} - y: {y}")
+        ax[x, y].plot(j[0], j[1], label=my_label)
+
+    fig, ax = plt.subplots(1, 2)
+    x = np.linspace(1, 10, 10)
+    my_points = my_comparison_object.fixation_pointsL
+    my_points.insert(0, "Start image")
+    for i, j in enumerate(my_comparison_object.saccade_variationsL):
+        my_label = f"Saccade {i}"
+        ax[0].plot(x, j, label=my_label)
+    ax[0].legend()
+    ax[0].set_xlabel('Avg value of Intensity')
+    ax[0].set_ylabel('Saliency')
+    ax[0].set_title('Variation of saliency')
+
+    x = np.linspace(1, 11, 11)
+    my_points = my_comparison_object.saccade_pointsL
+    my_points.insert(0, "Start image")
+    for i, j in enumerate(my_comparison_object.imagewise_variations_of_sal_pixelL):
+        my_label = "Point {}".format(my_comparison_object.saccade_pointsL[i])
+        ax[1].plot(x, j, label=my_label)
+    ax[1].legend()
+    ax[1].set_xlabel('saccades')
+    ax[1].set_ylabel('Saliency')
+    ax[1].set_title('Saliency of each Point for different saccades')
+    plt.show()
+
+    s = my_comparison_object.compute_image_stats()
+
+    my_image_ensemble = sal_ensemble(image_ensemble)
+    l_images, r_images = my_image_ensemble.get_images()
+    l_sal_ensemble = []
+    for i in l_images:
+        if i is not None:
+            l_sal_ensemble.append(1)
+        else:
+            l_sal_ensemble.append(None)
+    r_sal_ensemble = []
+    for i in r_images:
+        if i is not None:
+            r_sal_ensemble.append(2)
+        else:
+            r_sal_ensemble.append(None)
+
 
     image_ensemble = "./saliency_map/van-gogh-room.glb^2021-07-04-14-23-07-sal-processed-images"
 
@@ -821,155 +1301,7 @@ if __name__ == "__main__":
         break
 
 
-    start_processed = "./saliency_map/van-gogh-room.glb^2021-05-09-22-47-sal-processed"
-    image_ensemble = "./saliency_map/van-gogh-room.glb^2021-05-09-22-47-sal-processed-images"
-    sal_ensemble = "./saliency_map/van-gogh-room.glb^2021-05-09-22-47-sal-processed-images-sal-ensemble"
-    '''
-    start_processed = "./saliency_map/van-gogh-room.glb^2021-05-09-22-37-sal-processed"
-    image_ensemble = "./saliency_map/van-gogh-room.glb^2021-05-09-22-37-sal-processed-images"
-    sal_ensemble = "./saliency_map/van-gogh-room.glb^2021-05-09-22-37-sal-processed-images-sal-ensemble"
-    '''
-    my_comparison_object = fixation_comparison(start_processed, image_ensemble, sal_ensemble)
-    my_comparison_object.build_point_map()
-    my_comparison_object.compute_sal_variations()
-    my_comparison_object.compute_image_stats()
-    a, b = my_comparison_object.saliency_variation_vs_image_stats()
 
-    fig, ax = plt.subplots()
-    x = range(1,11,1)       # 10 points from the start image
-    for i,j in enumerate(my_comparison_object.sal_vals_from_fixationsL): # i 0 - 10 for a total of 11 
-        my_label = f"Image {i}"
-        ax.plot(x,j, label = my_label)
-    ax.legend()
-    ax.set_xlabel('Ten Salient points from start image')
-    ax.set_ylabel('Saliency values')
-    ax.set_title('saliency variations from fixations')
-    plt.show()
-
-
-    nrow = 1
-    ncol = 3
-    fig, ax = plt.subplots(nrow, ncol)
-    for index, i in enumerate([1,6,4]):
-        img = my_comparison_object.imagesL[i]
-        r,c = my_comparison_object.point_mapL[i][6]    # point 7 out of 10
-        wide = 5
-        img[r-wide:r+wide+1, c-wide:c+wide+1, 0] = 0    # RGB layers in the image
-        img[r-wide:r+wide+1, c-wide:c+wide+1, 1] = 0
-        img[r-wide:r+wide+1, c-wide:c+wide+1, 2] = 255
-        my_label = f"image {i}"
-        ax[index].imshow(img)
-        ax[index].set_title(my_label)
-
-    nrow = 1
-    ncol = 3
-    fig, ax = plt.subplots(nrow, ncol)
-    for index, i in enumerate([0, 1, 2]):
-        img = my_comparison_object.imagesL[i]
-        r, c = my_comparison_object.point_mapL[i][6]  # point 7 out of 10
-        wide = 5
-        img[r - wide:r + wide + 1, c - wide:c + wide + 1, 0] = 0  # RGB layers in the image
-        img[r - wide:r + wide + 1, c - wide:c + wide + 1, 1] = 0
-        img[r - wide:r + wide + 1, c - wide:c + wide + 1, 2] = 255
-        my_label = f"image {i}"
-        ax[index].imshow(img)
-        ax[index].set_title(my_label)
-
-
-    fig, ax = plt.subplots()
-    x = range(1, 12, 1)     # 11 images
-    for i, j in enumerate(my_comparison_object.imagewise_variations_of_sal_pixelL):  # i 0 to 9 for a total of 10
-        my_label = f"Point {i} across images"
-        ax.plot(x, j, label=my_label)
-    ax.legend()
-    ax.set_xlabel('Ten Salient points from start image')
-    ax.set_ylabel('Saliency values')
-    ax.set_title('saliency variations from fixations')
-    plt.show()
-
-    fig, ax = plt.subplots()
-    mylabel = f"Pixel 1 - Avg I"
-    ax.plot(a[0][0], a[0][1], label = mylabel)
-    mylabel = f"Pixel 1 - Avg Cb"
-    ax.plot(a[10][0], a[10][1], label = mylabel)
-    mylabel = f"Pixel 1 - Avg Cr"
-    ax.plot(a[20][0], a[20][1], label = mylabel)
-    ax.legend()
-    ax.set_xlabel('Avg value of Intensity')
-    ax.set_ylabel('Saliency')
-    ax.set_title('saliency vs Avg YCB for salient pixel 1')
-    plt.show()
-
-    fig, ax = plt.subplots()
-    mylabel = f"Pixel 1 - Std I"
-    ax.plot(b[0][0], b[0][1], label=mylabel)
-    mylabel = f"Pixel 1 - Std Cb"
-    ax.plot(b[10][0], b[10][1], label=mylabel)
-    mylabel = f"Pixel 1 - Std Cr"
-    ax.plot(b[20][0], b[20][1], label=mylabel)
-    ax.legend()
-    ax.set_xlabel('STD value of Intensity')
-    ax.set_ylabel('Saliency')
-    ax.set_title('saliency vs Std. YCB for salient pixel 1')
-    plt.show()
-
-
-    nrow = 2
-    ncol = 5
-    fig, ax = plt.subplots(nrow,ncol)
-    d = b[0:10]
-    for i, j in enumerate(d):
-        my_label = f"Saccade {i}"
-        x = i//ncol
-        y = i%ncol
-        print(f"i: {i} - x: {x} - y: {y}")
-        ax[x, y].plot(j[0], j[1], label=my_label)
-
-    fig, ax = plt.subplots(1,2)
-    x = np.linspace(1, 10, 10)
-    my_points = my_comparison_object.saccade_pointsL
-    my_points.insert(0, "Start image")
-    for i,j in enumerate(my_comparison_object.saccade_variationsL):
-        my_label = f"Saccade {i}"
-        ax[0].plot(x, j, label=my_label)
-    ax[0].legend()
-    ax[0].set_xlabel('Avg value of Intensity')
-    ax[0].set_ylabel('Saliency')
-    ax[0].set_title('Variation of saliency')
-
-    x = np.linspace(1, 11, 11)
-    my_points = my_comparison_object.saccade_pointsL
-    my_points.insert(0, "Start image")
-    for i, j in enumerate(my_comparison_object.imagewise_variations_of_sal_pixelL):
-        my_label = "Point {}".format(my_comparison_object.saccade_pointsL[i])
-        ax[1].plot(x, j, label=my_label)
-    ax[1].legend()
-    ax[1].set_xlabel('saccades')
-    ax[1].set_ylabel('Saliency')
-    ax[1].set_title('Saliency of each Point for different saccades')
-    plt.show()
-
-
-
-    s = my_comparison_object.compute_image_stats()
-
-
-    my_image_ensemble = sal_ensemble(image_ensemble)
-    l_images, r_images = my_image_ensemble.get_images()
-    l_sal_ensemble = []
-    for i in l_images:
-        if i is not None:
-            l_sal_ensemble.append(1)
-        else:
-            l_sal_ensemble.append(None)
-    r_sal_ensemble = []
-    for i in r_images:
-        if i is not None:
-            r_sal_ensemble.append(2)
-        else:
-            r_sal_ensemble.append(None)
-
-    a=9
 
 
 
@@ -1037,7 +1369,7 @@ if __name__ == "__main__":
     for count, sval in enumerate(sdata[8]):
         print(f"{count}. {sval}")
 
-    a=5
+
 
 
 

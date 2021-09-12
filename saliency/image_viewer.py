@@ -7,7 +7,24 @@ import quaternion
 import math
 import random
 
-
+def fix_sal_mistake():
+    my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+    for root, dirs, files in os.walk(my_dir):
+        for filename in files:
+            if "-sal-processed" in filename:
+                p_salfile = my_dir + filename
+                data = read_file(p_salfile)
+                salmapL = data[1][0]
+                salmapR = data[1][1]
+                both_salmap = [salmapL, salmapR]
+                d = filename.find("-sal-processed")
+                new_name = filename[0:d+4]
+                newfile = my_dir + new_name
+                try:
+                    with open(newfile, "wb") as f:
+                        pickle.dump(both_salmap, f)
+                except:
+                    print(f"Failure: To open and save saliency file {newfile}")
 
 def read_file(myfilename):
     try:
@@ -31,7 +48,7 @@ class image_set(object):
         image_data = read_file(self.start_imagefile)
         rows = 1
         cols = 2
-        fig, axes = plt.subplots(rows, cols)
+        fig, axes = plt.subplots(rows, cols, num = "Start Left and Right Images")
         axes[0].imshow(image_data[8][0])
         axes[1].imshow(image_data[8][1])
         pass
@@ -44,8 +61,8 @@ class image_set(object):
         start_image_salmapR = data_from_salfile[1][1]
         rows = 2
         cols = 2
-        fig, axes = plt.subplots(rows, cols)
-        fig.suptitle('Start Image and Saliency map')
+        fig, axes = plt.subplots(rows, cols, num = "Start Image and Saliency map")
+
 
         axes[0, 0].imshow(start_imageL)
         #axes[0, 1].imshow(start_imageL, alpha=0.2)
@@ -64,7 +81,6 @@ class image_set(object):
 
         axes[1, 0].axis('off')
         axes[1, 1].axis('off')
-        plt.show()
 
     def view_fixation_points(self):
         data_from_processed_file = read_file(self.start_image_fixation_file)
@@ -77,8 +93,8 @@ class image_set(object):
 
         rows = 3
         cols = 2
-        fig, axes = plt.subplots(rows, cols)
-        fig.suptitle('Image, Saliency map and fixations')
+        fig, axes = plt.subplots(rows, cols, num = "Image, Saliency map and fixations")
+
 
         axes[0, 0].imshow(start_imageL)
         axes[1, 0].imshow(start_imageL, alpha=0.2)
@@ -100,9 +116,9 @@ class image_set(object):
         axes[1, 1].axis('off')
         axes[2, 0].axis('off')
         axes[2, 1].axis('off')
-        plt.show()
 
-    def view_fixation_centered_images(self, which = "right"):
+
+    def view_fixation_centered_images(self, which = "left"):
         my_ensemble = saliency.sal_ensemble(self.fixation_images_file)
         left_images, right_images = my_ensemble.get_images()
         if which == "left":
@@ -112,16 +128,17 @@ class image_set(object):
 
         rows = 2
         cols = 5
-        fig, axes = plt.subplots(rows, cols)
-        fig.suptitle('Images from fixations')
+        fig, axes = plt.subplots(rows, cols, num = "Images from fixations")
         for r in range(rows):
             for c in range(cols):
                 img = images[c + r*cols]
                 if img is not None:
+                    i = r*5+c
+                    axes[r, c].set_title(f"image {i+1}")
                     axes[r, c].imshow(images[c + r*cols])
                 axes[r, c].axis('off')
-        plt.show()
 
+        plt.show()
 
 
 
@@ -134,20 +151,26 @@ def write_file(myfilename,output):
     except IOError as e:
         print(f"Failure: To open/write file {myfilename}")
 
-starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-22-10-06-51BGR"
+#starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-22-10-21-10RGB"
+starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB"
+#starting_point_image = \
+#    "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-go-2021-07-22-10-12-02RGB/van-gogh-room.glb^2021-07-22-10-12-02RGB0"
+
 
 if __name__ == "__main__":
-
+    #fix_sal_mistake()
     my_set = image_set(starting_point_image)
+
     my_set.view_start_image()
-    #my_set.view_start_image_and_salmap()
+    my_set.view_start_image_and_salmap()
     my_set.view_fixation_points()
-
-
     my_set.view_fixation_centered_images()
 
 
 
+
+
+    '''
     a = np.arange(12.).reshape(4,3,1)
     b = np.arange(12.).reshape(3, 4, 1)
     c = np.tensordot(a, b, axes=([1, 0], [0, 1]))
@@ -187,8 +210,9 @@ if __name__ == "__main__":
     my_data = read_file(processed_image)
     imgL_data = my_data[0]
     imgR_data = my_data[1]
+    '''
 
-    ''' aorn, apos, agent_head_neck_rotation, r_sensor_orn, my_image'''
+    '''
 
     total_images = len(imgL_data)
     row = 2
@@ -205,9 +229,6 @@ if __name__ == "__main__":
     plt.show()
 
 
-
-
-    '''
     consolidated.append(my_comparison.images)
     consolidated.append(my_comparison.salmap)
     consolidated.append(my_comparison.recon_image)
@@ -233,4 +254,4 @@ if __name__ == "__main__":
 
     plt.show()
     '''
-    a=5
+

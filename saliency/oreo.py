@@ -230,7 +230,7 @@ class Oreo_Robot(object):
         p.setAdditionalSearchPath(urdfPath)
         # Added by Rajan
         if urdfName.find(urdfPath) == -1:
-            urdfname = urdfPath + urdfName
+            urdfName = urdfPath + urdfName
         self.oreo_scan_data = urdfPath + self.oreo_scan_data
         self.interpolator_pickle_file = urdfPath + self.interpolator_pickle_file
 

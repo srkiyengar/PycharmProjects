@@ -1101,10 +1101,9 @@ class process_fixation_images(object):
 if __name__ == "__main__":
 
 
-    image_info_file = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB"
-
-    salmap_file = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal"
-    start_processed = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed"
+    image_info_file = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB"
+    salmap_file = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB-sal"
+    start_processed = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB-sal-processed"
     image_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images"
     sal_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images-sal-ensemble"
 

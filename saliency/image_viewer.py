@@ -26,6 +26,46 @@ def fix_sal_mistake():
                 except:
                     print(f"Failure: To open and save saliency file {newfile}")
 
+def save_all_images_and_salmap():
+    my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+    salmaps = []
+    images = []
+    imagesfile = None
+    salmapsfile = None
+    for root, dirs, files in os.walk(my_dir):
+        for filename in files:
+            if "-sal-processed" in filename:
+                p_salfile = my_dir + filename
+                try:
+                    data = read_file(p_salfile)
+                except:
+                    print(f"Failure: To read file {p_salfile}")
+                    break
+                images.append(data[0][0])
+                salmaps.append(data[1][0])
+                d = filename.find('RGB')
+                if d == -1:
+                    d = filename.find('rgb')
+                imagesfile = filename[0:d] + "-images"
+                salmapsfile = filename[0:d] + "-salmaps"
+
+    if imagesfile is not None:
+        try:
+            fname = my_dir + imagesfile
+            with open(fname, "wb") as f:
+                pickle.dump(images, f)
+        except:
+            print(f"Failure: To open and save saliency file {fname}")
+
+    if salmapsfile is not None:
+        try:
+            fname = my_dir + salmapsfile
+            with open(fname, "wb") as f:
+                pickle.dump(salmaps, f)
+        except:
+            print(f"Failure: To open and save saliency file {fname}")
+
+
 def read_file(myfilename):
     try:
         with open(myfilename, "rb") as f:
@@ -34,6 +74,96 @@ def read_file(myfilename):
         print("Failure: Loading pickle file {}".format(myfilename))
         exit(1)
     return data
+
+def read_images_and_salmap():
+
+    my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+    imagesfile = my_dir + "van-gogh-room.glb^2021-09-26-08-58-31-images"
+    salmapsfile = my_dir + "van-gogh-room.glb^2021-09-26-08-58-31-salmaps"
+
+    images = read_file(imagesfile)
+    nrow = 2
+    ncol = 5
+    Images, ax1 = plt.subplots(nrow, ncol)
+    for i, j in enumerate(images):
+        x = i // ncol
+        y = i % ncol
+        if i > 9:
+            break
+        ax1[x, y].axis('off')
+        if j is not None:
+            my_label = f"Image {i + 1}"
+            ax1[x, y].imshow(j)
+            ax1[x, y].set_title(my_label)
+    plt.show()
+
+    Salmaps, ax2 = plt.subplots(nrow, ncol)
+    salmaps = read_file(salmapsfile)
+    for i, j in enumerate(salmaps):
+        x = i // ncol
+        y = i % ncol
+        if i > 9:
+            break
+        ax2[x, y].axis('off')
+        if j is not None:
+            my_label = f"Salmap {i + 1}"
+            ax2[x, y].imshow(j)
+            ax2[x, y].set_title(my_label)
+    plt.show()
+    return
+
+
+
+
+def view_images_and_salmap():
+    my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/old/"
+    #my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+
+    salmaps = []
+    images = []
+    for root, dirs, files in os.walk(my_dir):
+        for filename in files:
+            if "-sal-processed" in filename:
+                p_salfile = my_dir + filename
+                try:
+                    data = read_file(p_salfile)
+                except:
+                    print(f"Failure: To read file {p_salfile}")
+                    break
+                images.append(data[0][0])
+                salmaps.append(data[1][0])
+
+    nrow = 2
+    ncol = 5
+    Images, ax1 = plt.subplots(nrow, ncol)
+    for i, j in enumerate(images):
+        x = i // ncol
+        y = i % ncol
+        if i > 9:
+            break
+        ax1[x, y].axis('off')
+        if j is not None:
+            my_label = f"Image {i + 1}"
+            ax1[x, y].imshow(j)
+            ax1[x, y].set_title(my_label)
+
+
+    Salmaps, ax2 = plt.subplots(nrow, ncol)
+    for i, j in enumerate(salmaps):
+        x = i // ncol
+        y = i % ncol
+        if i > 9:
+            break
+        ax2[x, y].axis('off')
+        if j is not None:
+            my_label = f"Salmap {i + 1}"
+            ax2[x, y].imshow(j)
+            ax2[x, y].set_title(my_label)
+    plt.show()
+
+
+
+
 
 class image_set(object):
 
@@ -152,20 +282,25 @@ def write_file(myfilename,output):
         print(f"Failure: To open/write file {myfilename}")
 
 #starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-07-22-10-21-10RGB"
-starting_point_image = "/Users/rajan/PycharmProjects/saliency/saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB"
+starting_point_image = \
+    "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB9"
 #starting_point_image = \
 #    "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-go-2021-07-22-10-12-02RGB/van-gogh-room.glb^2021-07-22-10-12-02RGB0"
 
 
 if __name__ == "__main__":
     #fix_sal_mistake()
-    my_set = image_set(starting_point_image)
+    #read_images_and_salmap()
+    #save_all_images_and_salmap()
+    view_images_and_salmap()
 
+    '''
+    my_set = image_set(starting_point_image)
     my_set.view_start_image()
     my_set.view_start_image_and_salmap()
     my_set.view_fixation_points()
     my_set.view_fixation_centered_images()
-
+    '''
 
 
 

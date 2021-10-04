@@ -20,8 +20,8 @@ sensor_resolution = [512,512]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
-#scene = "../multi_agent/data_files/van-gogh-room.glb"
-scene = "../multi_agent/data_files/skokloster-castle.glb"
+scene = "../multi_agent/data_files/van-gogh-room.glb"
+#scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 def homogenous_transform(R, vect):
     """
@@ -229,30 +229,30 @@ class agent_oreo(object):
 
         self.agent_config = habitat_sim.AgentConfiguration()
         # Left sensor - # oreo perspective - staring at -ive z
-        self.left_sensor = habitat_sim.SensorSpec()
+        self.left_sensor = habitat_sim.CameraSensorSpec()
+        #self.left_sensor = habitat_sim.SensorSpec()
         self.left_sensor.sensor_type = habitat_sim.SensorType.COLOR
         self.left_sensor.resolution = sensor_resolution
         self.left_sensor.uuid = "left_rgb_sensor"
         self.left_sensor.position = [-eye_separation / 2, 0.0, 0.0]
         self.left_sensor.orientation = np.array([0.0,0.0,0.0], dtype=float)
-        self.left_sensor_hfov = math.radians(int(self.left_sensor.parameters['hfov']))
-        self.focal_distance = sensor_resolution[0]/(2*math.tan(self.left_sensor_hfov/2))
+
 
         # Right sensor - # oreo perspective - staring at -ive z
-        self.right_sensor = habitat_sim.SensorSpec()
+        self.right_sensor = habitat_sim.CameraSensorSpec()
+        #self.right_sensor = habitat_sim.SensorSpec()
         self.right_sensor.sensor_type = habitat_sim.SensorType.COLOR
         self.right_sensor.resolution = sensor_resolution
         self.right_sensor.uuid = "right_rgb_sensor"
         self.right_sensor.position = [eye_separation / 2, 0.0, 0.0]
         self.right_sensor.orientation = np.array([0.0, 0.0, 0.0], dtype=float)
-        self.right_sensor_hfov = math.radians(int(self.right_sensor.parameters['hfov']))
-        if self.right_sensor_hfov != self.left_sensor_hfov:
-            print("Warning - Right and Left Sensor widths are not identical!")
+
 
         # Depth camera - At the origin of the reference coordinate axes (habitat frame)
         if depth_camera:
             self.num_sensors = 3
-            self.depth_sensor = habitat_sim.SensorSpec()
+            self.depth_sensor = habitat_sim.CameraSensorSpec()
+            #self.depth_sensor = habitat_sim.SensorSpec()
             self.depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
             self.depth_sensor.resolution = sensor_resolution
             self.depth_sensor.uuid = "depth_sensor"
@@ -291,6 +291,14 @@ class agent_oreo(object):
         # agent_head_neck_rotation (not a part of habitat api to keep track of head/neck rotation wrt to the agent.
         # HabitatAI api agent rotation is not rotation of agent wrt to WCS followed by rotation of head/neck
         self.agent_head_neck_rotation = np.quaternion(1,0,0,0)
+
+        hfov = self.agent._sensors['left_rgb_sensor'].hfov
+        self.left_sensor_hfov = math.radians(hfov)
+        self.focal_distance = sensor_resolution[0]/(2*math.tan(self.left_sensor_hfov/2))
+        hfov = self.agent._sensors['right_rgb_sensor'].hfov
+        self.right_sensor_hfov = math.radians(hfov)
+        if self.right_sensor_hfov != self.left_sensor_hfov:
+            print("Warning - Right and Left Sensor widths are not identical!")
 
         #self.counter = 0  # counter for saccade file numbering
         # self.filename = self.create_unique_filename(scene)
@@ -712,7 +720,7 @@ class agent_oreo(object):
                 print(f"Saved Image file {self.start_image_filenameRGB}")
         except IOError as e:
             print(f"Failure: To open/write image and data file {self.start_image_filenameRGB}")
-            return 0
+            return None
 
         """
         del output[-1]
@@ -726,7 +734,7 @@ class agent_oreo(object):
             print(f"Failure: To open/write image and data file {self.start_image_filenameBGR}")
             return 0
         """
-        return 1
+        return self.start_image_filenameRGB
 
     def capture_start_image_for_saliency(self):
         self.my_images = self.get_sensor_observations()
@@ -767,6 +775,7 @@ class agent_oreo(object):
                 aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
             return
 
+
     def capture_images_for_fixations(self, processed_salfile):
 
         robot_current_state = self.get_current_state()      # saving the current robot state
@@ -794,28 +803,28 @@ class agent_oreo(object):
                     # cycle through salient points in salpoint_data for all points for both images and generate
                     image_list_left = []
                     for i in salpoint_data[5]:  # salient point from Left eye image salient points
-                        oreo_in_habitat.restore_state(start_image_agent_state)
+                        self.restore_state(start_image_agent_state)
                         new_x = i[1]    # x-axis is column (width) and y-axis is row (height) of the image
                         new_y = i[0]
-                        success = oreo_in_habitat.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
                         if success == 1:
-                            aorn, apos, l_sensor_orn, _ = oreo_in_habitat.get_agent_sensor_position_orientations()
-                            val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, l_sensor_orn,
-                                   oreo_in_habitat.my_images[0][..., 0:3]]
+                            aorn, apos, l_sensor_orn, _ = self.get_agent_sensor_position_orientations()
+                            val = [aorn, apos, self.agent_head_neck_rotation, l_sensor_orn,
+                                   self.my_images[0][..., 0:3]]
                             image_list_left.append([i, val])
                         else:
                             image_list_left.append([i, None])
 
                     image_list_right = []
                     for i in salpoint_data[8]:  # right eye image
-                        oreo_in_habitat.restore_state(start_image_agent_state)
+                        self.restore_state(start_image_agent_state)
                         new_x = i[1]
                         new_y = i[0]
-                        success = oreo_in_habitat.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
                         if success == 1:
-                            aorn, apos, _, r_sensor_orn = oreo_in_habitat.get_agent_sensor_position_orientations()
-                            val = [aorn, apos, oreo_in_habitat.agent_head_neck_rotation, r_sensor_orn,
-                                   oreo_in_habitat.my_images[1][..., 0:3]]
+                            aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
+                            val = [aorn, apos, self.agent_head_neck_rotation, r_sensor_orn,
+                                   self.my_images[1][..., 0:3]]
                             image_list_right.append([i, val])
                         else:
                             image_list_right.append([i, None])
@@ -830,6 +839,79 @@ class agent_oreo(object):
                     except IOError as e:
                         print(f"Failure: To open/write image and data file {image_filename}")
                         return None
+
+    def capture_next_image_from_fixations(self, p_dir, p_file, num):
+
+        robot_current_state = self.get_current_state()      # saving the current robot state
+        # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
+        location = p_file.find('RGB')
+        new_filename = p_file[0:location+3]
+        _, scene_name = os.path.split(self.backend_cfg.scene_id)
+        d = new_filename.find("^")
+        if d == -1:
+            print(f"The saliency file name {scenename_salfile} is missing the ^ char")
+            print(f"Not capturing images from salient saccade points")
+            return None
+        else:
+            if scene_name != p_file[0:d]:
+                print(f"Saliency file {p_file} does not belong to scene {scene_name}")
+                return None
+            else:
+                salpoint_data = saliency.get_salpoints(p_dir+p_file)
+                # salpoint_data is a list  = [agent orientation, agent Position, robot_head_neck_rotation,
+                # left_image, lefteye Rotation, list of x,y points, right_image, righteye Rotation, list of x,y points]
+                if salpoint_data is None:
+                    return None
+                else:
+                    start_image_agent_state = self.setup_agent_state\
+                        ([salpoint_data[0],salpoint_data[1], salpoint_data[4], salpoint_data[7]])
+                    for i in salpoint_data[5]:  # salient point from Left eye image salient points
+                        self.restore_state(start_image_agent_state)
+                        new_x = i[1]    # x-axis is column (width) and y-axis is row (height) of the image
+                        new_y = i[0]
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        if success == 1:
+                            aorn, apos, l_sensor_orn, _ = self.get_agent_sensor_position_orientations()
+                            image_left = self.my_images[0][..., 0:3]
+                            break
+                        else:
+                            pass
+
+                    for i in salpoint_data[8]:  # right eye image
+                        self.restore_state(start_image_agent_state)
+                        new_x = i[1]
+                        new_y = i[0]
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        if success == 1:
+                            aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
+                            image_right = self.my_images[1][..., 0:3]
+                            break
+                        else:
+                            pass
+
+                    output = []
+
+                    output.append(aorn)  # Agent orn
+                    output.append(apos)  # Agent position
+                    output.append(self.agent_head_neck_rotation)
+                    output.append(l_sensor_orn)  # lefteye orientation
+                    output.append(r_sensor_orn)  # righteye orientation
+                    # sensor res. hfov, focal distance - same for left, right and depth
+                    output.append(self.left_sensor.resolution)
+                    output.append(self.left_sensor_hfov)
+                    output.append(self.focal_distance)
+                    images = image_left, image_right
+                    output.append(images)           # Left and Right RGB images
+
+                    image_filenameRGB = p_dir + new_filename + str(num+1)
+                    try:
+                        with open(image_filenameRGB, "wb") as f:
+                            pickle.dump(output, f)
+                            print(f"Saved Image file {image_filenameRGB}")
+                    except IOError as e:
+                        print(f"Failure: To open/write image and data file {image_filenameRGB}")
+                        return None
+
 
 """
     def get_start_image_filename(self):
@@ -948,6 +1030,12 @@ if __name__ == "__main__":
                     oreo_in_habitat.restore_state(robot_current_state)
                     continue
         elif k == ord("3"):
+            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+            filename ="van-gogh-room.glb^2021-09-26-08-58-31RGB9-sal-processed"
+            count = 9
+            oreo_in_habitat.capture_next_image_from_fixations(processed_dir,filename,count)
+            continue
+        elif k == ord("4"):
             #take the processed saliency file to capture salient images and related information
             processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
             filename ="van-gogh-room.glb^2021-07-04-14-23-07-sal-processed"
@@ -968,7 +1056,7 @@ if __name__ == "__main__":
                         limage = oreo_in_habitat.capture_fixation_image(p_salfile, image_number)
                         image_number += 1
                     continue
-        elif k == ord('4'):
+        elif k == ord('5'):
             oreo_in_habitat.restore_state(robot_current_state)
             continue
         elif k == ord('n'):

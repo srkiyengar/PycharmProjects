@@ -168,6 +168,59 @@ def read_pickled_file(sfilename, filetype=" "):
         print(f"Failure: To read {filetype} file {sfilename}")
         return None
 
+
+def check_for_ior(eye_orn_wrt_WCS_list, new_orn_wrt_WCS, x, y, resolution, focal_distance):
+    '''
+    :param eye_orn_wrt_WCS_list - list of orientation of lefteye for all the previous fixations
+    :type quaternion list
+    :param x and y are pixel locations in the current frame
+    :type pixel locations with origin at top left
+    :returns True if the points x
+    '''
+
+    w = resolution[0] / 2  # corresponds to x-axis or column
+    h = resolution[1] / 2  # y-axis or row
+    v = np.array([0, 0, -focal_distance])
+    uvector = v / np.linalg.norm(v) # vector pointing to the mid-point (0,0) of a fixation
+
+    delta_x = int(resolution[0]/50)
+    delta_y = int(resolution[1]/50)
+    pix_window_x = [x-delta_x, x+delta_x]
+    pix_window_y = [y-delta_y, y+delta_y]
+    total_frames = len(eye_orn_wrt_WCS_list)
+    print(f"Total number of previous frames {total_frames}")
+    next_fix = total_frames + 1  # minimum value is 1
+
+    if not eye_orn_wrt_WCS_list:
+        print(f"Proposed fixation {next_fix}: Pixel location ({x},{y}) is a new fixation from the first (1st) saccade")
+        return False
+    else:
+        for num, rot in enumerate(eye_orn_wrt_WCS_list):
+            R = new_orn_wrt_WCS.inverse() * rot  # Rotation from current frame to previous frame
+            # rotate the uvector
+            new_vector = quaternion.as_rotation_matrix(R).dot(uvector.T)
+            ux = new_vector[0]
+            uy = new_vector[1]
+            uz = new_vector[2]
+            # calculate angles that the unit vector makes with z axis and with xz plane
+            uxz = np.sqrt(ux * ux + uz * uz)
+            theta = np.arcsin(ux / uxz)  # z is never zero, theta is the rotation angle about y-axis - yaw angle
+            phi = np.arcsin(uy)  # x is the angle about x - pitch angle
+            # compute x,y (z = -focal length)
+            xval = focal_distance * np.tan(theta)
+            yval = focal_distance * np.tan(phi)
+            # convert to top left origin
+            xn = math.floor(xval + w)
+            yn = math.floor(h - yval)
+            print(f"Fixation Center of frame {num} in current frame = ({xn}, {yn})")
+            if pix_window_x[0] <= xn <= pix_window_x[1] and pix_window_y[0] <= yn <= pix_window_y[1]:  # Change this
+                print(f"!!! Proposed fixation {next_fix} IOR: Pixel location ({x},{y}) was fixated in saccade {num+1}")
+                return True
+            else:
+                print(f"Proposed fixation {next_fix} was NOT fixated in saccade {num+1}")
+        print(f"Proposed fixation {next_fix}: Pixel location ({x},{y}) is a new fixation")
+        return False
+
 def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, frame_no, focal_distance, width, height):
     '''
     Reference for rotation is Habitat World Coordinates
@@ -228,7 +281,7 @@ class process_image(object):
     rotation information for both images.
     '''
 
-    def __init__(self, image_info_file, my_block = 16, total_points = 10, pixel_max = 150):
+    def __init__(self, image_info_file, my_block = 16, total_points = 10, pixel_max = 150, output_subfolder = "yes"):
         self.fname = image_info_file
         try:
             with open(image_info_file, "rb") as f:
@@ -275,9 +328,13 @@ class process_image(object):
         self.center_pointsR = []
 
         head, tail = os.path.split(image_info_file)
-        results_folder = head + '/results'
-        if not os.path.exists(results_folder):
-            os.makedirs(results_folder)
+        if output_subfolder == "yes":
+            results_folder = head + '/results'
+            if not os.path.exists(results_folder):
+                os.makedirs(results_folder)
+        else:
+            results_folder = head
+
         self.output_filename = results_folder + '/' + tail + "-sal-processed"
         self.salmap_filename = results_folder + '/' + tail + "-sal"
 
@@ -325,8 +382,9 @@ class process_image(object):
                 return
 
         # This portion would also work without sal_file immediately after saving the Deep Gaze II.
-        if self.salmapL is None and self.salmapR is None:
-            print(print(f"Failure: Saliency numpy ndarray is empty"))
+        #if self.salmapL is None and self.salmapR is None:
+        if self.salmapL is None:
+            print(print(f"Failure: Left saliency numpy ndarray is empty"))
             return
         else:
             # self.salmap[0] = left saliency map and self.salmap[1] = right saliency map
@@ -428,9 +486,10 @@ class process_image(object):
             with open(self.output_filename, "wb") as f:
                 pickle.dump(all, f)
                 print(f"Saved processed saliency file {self.output_filename}")
+                return self.output_filename
         except:
             print(f"Failure: To save saliency file {self.output_filename}")
-
+            return None
 
     def read_sal_datafile(self):
         '''
@@ -1096,10 +1155,29 @@ class process_fixation_images(object):
             except:
                 print(f"Failure: To save processed saliency file {sal_processed_filename}")
 
-
+import shutil
 
 if __name__ == "__main__":
 
+    count = 0
+    count +=1
+
+    dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
+    for path, subdirs, files in os.walk(dest_folder):
+        for filename in files:
+            d = filename.find("^")
+            dir_name = filename[0:3] + filename[d + 1:]
+            new_dir = path + '/' + dir_name
+            if not os.path.exists(new_dir):
+                os.makedirs(new_dir)
+            file = path + '/' + filename
+            shutil.move(file, new_dir)
+            newfile = new_dir + '/' + filename
+        break  # we are not interested in sub-directories of the result_folder
+
+    filename = "van-gogh-room.glb^2021-10-05-23-59-16RGB0"
+    d = filename.find("^")
+    new_dir = filename[0:3] + filename[d + 1:]
 
     image_info_file = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB"
     salmap_file = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/van-gogh-room.glb^2021-09-26-08-58-31RGB-sal"
@@ -1107,8 +1185,12 @@ if __name__ == "__main__":
     image_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images"
     sal_ensemble = "./saliency_map/results-skok/skokloster-castle.glb^2021-07-28-17-13-24RGB-sal-processed-images-sal-ensemble"
 
+    my_dir = "./saliency_map/results/"
+    for root, dirs, files in os.walk(my_dir):
+        pass
+    my_sal_object = process_image(image_info_file, output_subfolder="no")
 
-    fixation_images = process_fixation_images(image_info_file)
+    fixation_images = process_fixation_images(image_info_file,)
 
     images_list = range(0,10,1)
     images = []

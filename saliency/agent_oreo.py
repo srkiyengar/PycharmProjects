@@ -612,7 +612,7 @@ class agent_oreo(object):
         yval = (self.left_sensor.resolution[1] / 2) - yt  # height
         return xval, yval
 
-
+    # empty
     def saccade_to_new_point(self, xLeft, yLeft, xRight, yRight, oreo_pyb_sim):
         """
 
@@ -639,6 +639,7 @@ class agent_oreo(object):
         Compute the uvector pointing in the new sensor direction wrt agent frame
         Get the yaw and pitch.
         '''
+
 
         # Left
         new_dir_left_sensorframe = self.compute_uvector_for_image_point(xLeft, yLeft)

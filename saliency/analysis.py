@@ -2,6 +2,7 @@ import pickle
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+import saliency
 
 max = 11        #Number of images Start + 10
 
@@ -44,11 +45,15 @@ def get_images_and_salmaps(dir_path, sal_processed_dir):
 
     image_list = []
     salmap_list = []
+    lsensor_rot = []
+    focal_distance = []
     d = sal_processed_dir.find('RGB0')
     common_name = sal_processed_dir[0:d + 3]
     scene = common_name
     common_name = "van-gogh-room.glb^" + common_name[3:]
     #common_name = "skokloster-castle.glb^"+ common_name[3:]
+
+    collect_once = 0
 
     for i in range(max):
         filename = common_name + str(i) + '-sal-processed'
@@ -57,11 +62,18 @@ def get_images_and_salmaps(dir_path, sal_processed_dir):
         if my_data is not None:
             image_list.append(my_data[0][0])
             salmap_list.append(my_data[1][0])
+            lsensor_rot.append(my_data[8][0])
+            focal_distance.append(my_data[5])
+            if collect_once == 0:
+                processed_salmap = my_data[3][0]        #just a sample recreated salmap for graphing
+                collect_once = 1
         else:
             print(f"Error - directory {sal_processed_dir} filename {filename}")
             image_list.append(None)
             salmap_list.append(None)
-    return image_list, salmap_list, scene
+            lsensor_rot.append(None)
+            focal_distance.append(None)
+    return image_list, salmap_list, lsensor_rot, focal_distance, scene, processed_salmap
 
 
 def display_salmaps(salmaps):
@@ -173,8 +185,8 @@ def display_images_salmaps_and_distances(scene, images, salmaps, distances):
     ncol = 5
     fig1, ax1 = plt.subplots(nrow, ncol)
     fig2, ax2 = plt.subplots(nrow, ncol)
-    fig1.suptitle(f'Scene {scene} Images 0 to 4', fontsize=12)
-    fig2.suptitle(f'Scene {scene} Images 5 to 9', fontsize=12)
+    #fig1.suptitle(f'Scene {scene} Images 0 to 4', fontsize=12)
+    #fig2.suptitle(f'Scene {scene} Images 5 to 9', fontsize=12)
     images.pop()
     salmaps.pop()
 
@@ -184,18 +196,24 @@ def display_images_salmaps_and_distances(scene, images, salmaps, distances):
         if j[0] is not None and j[1] is not None:
             x = i // ncol
             y = i % ncol
+            ax1[x, y].axis('off')
             if x == 0:
                 ax1[0, y].imshow(j[0])
-                ax1[0, y].set_title(f"Fix {y}")
+                #ax1[0, y].set_title(f"Fix {y}")
                 ax1[1, y].imshow(j[1])
+                '''
                 ax1[1, y].set_xlabel(f'Jacc.Index {jc[i]:.3f}\nB. Coe. = {bc[i]:.3f}\nImage Entropy = {sE[i]:.3f}\n'
                                      f'Cross Entropy = {cE[i]:.3f}\nKL Div = {kl[i]:.3f}\nMax. Sal Val = {mval[i]:.6f}')
+                '''
             else:
+
                 ax2[0, y].imshow(j[0])
-                ax2[0, y].set_title(f"Fix {ncol + y}")
+                #ax2[0, y].set_title(f"Fix {ncol + y}")
                 ax2[1, y].imshow(j[1])
+                '''
                 ax2[1, y].set_xlabel(f'Jacc.Index {jc[i]:.3f}\nB. Coe. = {bc[i]:.3f}\nImage Entropy = {sE[i]:.3f}\n'
                                      f'Cross Entropy = {cE[i]:.3f}\nKL Div = {kl[i]:.3f}\nMax. Sal Val = {mval[i]:.6f}')
+                '''
     #plt.show()
 
 
@@ -409,26 +427,157 @@ def salmap_entropy(pred_map, true_map=None):
         return shannon_entropy, None, count
 
 
+
+
+def compute_overlap_and_distances(rgb_list, heatmap_list, rotn_list, fdist_list, my_scene):
+
+    #frame_no, focal_distance, width, height
+    ref_rotn = rotn_list[0]
+    focal_length = fdist_list[0]
+    width, height = heatmap_list[0].shape
+    ref_rgb = rgb_list[0]
+    shaded_ref_views_images = []
+    shaded_saccaded_views_images = []
+    shaded_ref_views_salmaps = []
+    shaded_saccaded_views_salmaps = []
+    jaccard = []
+
+    for i, j in enumerate(heatmap_list):
+
+        ref_bool_map, saccade_bool_map, j_coe = saliency.map_pixels(ref_rotn,rotn_list[i],focal_length,width,height,heatmap_list[0],heatmap_list[i])
+        #show_overalmapsv2(ref_rgb, ref_bool_map, rgb_list[i], saccade_bool_map)
+        ref_shaded_map_image, saccade_shaded_map_image = produce_shaded_images(ref_rgb, ref_bool_map, rgb_list[i], saccade_bool_map)
+        shaded_ref_views_images.append(ref_shaded_map_image)
+        shaded_saccaded_views_images.append(saccade_shaded_map_image)
+        ref_shaded_map_sal, saccade_shaded_map_sal = produce_shaded_salmaps(heatmap_list[0], ref_bool_map, heatmap_list[i], saccade_bool_map)
+        shaded_ref_views_salmaps.append(ref_shaded_map_sal)
+        shaded_saccaded_views_salmaps.append(saccade_shaded_map_sal)
+        #j_coe = jaccard_similarity_coefficient_vectors(ref_shaded_map_sal, saccade_shaded_map_sal)
+
+        jaccard.append(j_coe)
+    #display_overlaps(shaded_ref_views_images, shaded_saccaded_views_images,my_scene)
+    #display_overlaps(shaded_ref_views_salmaps, shaded_saccaded_views_salmaps,my_scene)
+    jaccard.pop(0)
+    return jaccard
+
+def produce_shaded_images(ref_image, ref_image_map, next_image, next_image_map):
+
+    ref_image_map_2D = np.copy(ref_image_map)
+    ref_image_map_3D = np.dstack([ref_image_map_2D, ref_image_map_2D, ref_image_map_2D])
+    common_ref_image = ref_image * ref_image_map_3D
+
+    next_image_map_2D = np.copy(next_image_map)
+    next_image_map_3D = np.dstack([next_image_map_2D, next_image_map_2D, next_image_map_2D])
+    common_next_image = next_image * next_image_map_3D
+
+    return common_ref_image, common_next_image
+
+def produce_shaded_salmaps(ref_salmap, ref_image_map, next_salmap, next_image_map):
+
+    common_ref_salmap = ref_salmap * ref_image_map
+    common_next_salmap = next_salmap * next_image_map
+
+    return common_ref_salmap, common_next_salmap
+
+
+def show_overalmaps(ref_image, ref_image_map, next_image, next_image_map):
+
+    fig, ax = plt.subplots(2, 1)
+    ax[0].axis('off')
+    ax[1].axis('off')
+    ref_image_map_2D = np.copy(ref_image_map)
+    ref_image_map_3D = np.dstack([ref_image_map_2D, ref_image_map_2D, ref_image_map_2D])
+    common_ref_image = ref_image*ref_image_map_3D
+
+    next_image_map_2D = np.copy(next_image_map)
+    next_image_map_3D = np.dstack([next_image_map_2D, next_image_map_2D, next_image_map_2D])
+    common_next_image = next_image * next_image_map_3D
+
+    ax[0].imshow(common_ref_image)
+    ax[1].imshow(common_next_image)
+    plt.show()
+
+def show_overalmapsv2(ref_image, ref_image_map, next_image, next_image_map):
+
+    fig, ax = plt.subplots(2, 2)
+    ax[0, 0].axis('off')
+    ax[0, 1].axis('off')
+    ax[1, 0].axis('off')
+    ax[1, 1].axis('off')
+
+    ref_image_map_2D = np.copy(ref_image_map)
+    ref_image_map_3D = np.dstack([ref_image_map_2D, ref_image_map_2D, ref_image_map_2D])
+    common_ref_image = ref_image*ref_image_map_3D
+
+    next_image_map_2D = np.copy(next_image_map)
+    next_image_map_3D = np.dstack([next_image_map_2D, next_image_map_2D, next_image_map_2D])
+    common_next_image = next_image * next_image_map_3D
+
+    ax[0, 0].imshow(ref_image)
+    ax[0, 1].imshow(common_ref_image)
+    ax[1, 0].imshow(next_image)
+    ax[1, 1].imshow(common_next_image)
+    plt.show()
+
+
+def display_overlaps(shaded_start_images, shaded_saccaded_images,desc =""):
+    nrow = 2
+    ncol = 5
+    fig1, ax1 = plt.subplots(nrow, ncol)
+    fig2, ax2 = plt.subplots(nrow, ncol)
+
+    u = shaded_start_images.pop(0)
+    v = shaded_saccaded_images.pop(0)
+    title1 = desc +'-'+'figure1'
+    title2 = desc +'-'+'figure2'
+    fig1.suptitle(title1)
+    fig2.suptitle(title2)
+
+    for i, j in enumerate(zip(shaded_start_images,shaded_saccaded_images)):
+
+        x = i // ncol
+        y = i % ncol
+
+        ax1[x, y].axis("off")
+        ax2[x, y].axis("off")
+
+        if i < ncol:
+            ax1[0, y].imshow(j[0])
+            ax1[1, y].imshow(j[1])
+        else:
+            ax2[0, y].imshow(j[0])
+            ax2[1, y].imshow(j[1])
+
+    plt.show()
+    pass
+
+
+def generate_processed_salmaps(image, salmap, scenename):
+
+    fig, ax = plt.subplots(1, 1)
+    fig.suptitle(scenename)
+    ax.imshow(image, alpha=0.7)
+    ax.matshow(salmap, alpha=0.4, cmap=plt.cm.RdBu)
+    ax.axis('off')
+    plt.show()
+
+
 my_dir = "/Users/rajan/PycharmProjects/saliency/saliency_data"
 
 
 if __name__ == "__main__":
 
-    k = "van2021-10-24-02-00-25RGB0"
-    path = "/Users/rajan/PycharmProjects/saliency/saliency_data"
-    img_list, smap_list, _ = get_images_and_salmaps(path, k)
-    ldp = smap_list[0]
-    size = 256
 
-    A1 = np.ones(ldp.shape)
-    B1 = np.ones((size, size))
+    newfile = my_dir + '/' + "jaccard_data"
+    data = read_file(newfile)
 
-    shape = np.add(A1.shape, B1.shape)
-    A2 = np.zeros(shape)
-    B2 = np.zeros(shape)
-    A2[:A1.shape[0], :A1.shape[1]] = A1
-    B2[:B1.shape[0], :B1.shape[1]] = B1
+    concat = []
+    for i in data:
+        concat = concat + i[1]
 
+    arr = np.array(concat)
+    std_jc = np.std(arr,axis=0)
+    mean_jc = np.mean(arr,axis=0)
 
     #k = "van2021-10-24-02-00-25RGB0"
     #k = "van2021-10-24-23-36-04RGB0"
@@ -441,21 +590,34 @@ if __name__ == "__main__":
     if img_list is not None:
         display_images_and_salmaps(img_list, smap_list)
     '''
-
+    jaccard_list = []
 
     for path, subdirs, files in os.walk(my_dir):
         for k in subdirs:
-            img_list, smap_list, scene = get_images_and_salmaps(path, k)
+            img_list, smap_list, sensor_rot, f_distance, scene, sample_processed_salmap = get_images_and_salmaps(path, k)
             print(f"Number of images: {len(img_list)}\nNumber of Salmaps: {len(smap_list)}")
-            temp = compute_histogram(smap_list, scene)
+            #temp = compute_histogram(smap_list, scene)
             #create_salmap_pickle(smap_list, path, k)
             if img_list is not None:
                 #isplay_salmaps(smap_list)
                 #display_images_and_salmaps(img_list, smap_list)
-                distances = compute_distances_for_10_salmaps(smap_list)
-                display_distances(distances,scene)
-                display_images_salmaps_and_distances(scene, img_list, smap_list, distances)
-                display_10_salmaps(smap_list,scene)
-                display_avg_diff(smap_list, scene)
+                vect_jc = compute_overlap_and_distances(img_list, smap_list, sensor_rot, f_distance, scene)
+                jc_tuple = (scene, vect_jc)
+                jaccard_list.append(jc_tuple)
+                #generate_processed_salmaps(img_list[0], sample_processed_salmap, scene)
+                #distances = compute_distances_for_10_salmaps(smap_list)
+                #display_distances(distances,scene)
+                #display_images_salmaps_and_distances(scene, img_list, smap_list, distances)
+                #display_10_salmaps(smap_list,scene)
+                #display_avg_diff(smap_list, scene)
             pass
+
+    newfile = my_dir + '/' + "jaccard_data"
+    try:
+        with open(newfile, "wb") as f:
+            pickle.dump(jaccard_list, f)
+    except:
+        print(f"Failure: To open and save saliency file {newfile}")
+
+    data = read_file(newfile)
     pass

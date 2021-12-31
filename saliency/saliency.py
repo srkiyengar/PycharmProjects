@@ -37,7 +37,7 @@ RGB_to_YCbCr[2,:] = [0.439, -0.368, -0.071]
 '''
 
 
-def map_pixels(R1, R2, focal_distance, width, height):
+def map_pixels(R1, R2, focal_distance, width, height, primary_smap, sac_smap):
     '''
     Reference for rotation is Habitat World Coordinates
     :param R1 Rotation in quaterion from WCS to start image whose pixel locations are known
@@ -49,14 +49,21 @@ def map_pixels(R1, R2, focal_distance, width, height):
     '''
 
     R = R2.inverse()*R1     #Rotation from any image frame to start image frame
-    w = width/2
-    h = height/2
+    w = int(width/2)
+    h = int(height/2)
 
-    count = 0
+    common = 0
+    new = 0
     common_pixels = []
     only_start_image_pixels = []
     other_image_exclusion = []
     other_image_pixels =[]
+    fd_squared = focal_distance*focal_distance
+    ref_map = np.zeros((height,width),dtype=int)
+    new_map = np.zeros((height,width),dtype=int)
+
+    minJC = 0
+    maxJC = 0
     for xpos in range(width):               # xpos in start image - column
         for ypos in range(height):          # ypos in start image - row
             # x, y for origin at the center of the frame and computing the unit vector
@@ -76,25 +83,34 @@ def map_pixels(R1, R2, focal_distance, width, height):
             theta = np.arcsin(ux / uxz)  # z is never zero, theta is the angle wrt to y
             phi = np.arcsin(uy)  # x is the angle wrt to z
             # compute x,y (z = -focal length)
-            xval = focal_distance * np.tan(theta)
-            yval = focal_distance * np.tan(phi)
+            xval = int(round(focal_distance * np.tan(theta)))
+            xz = np.sqrt(fd_squared+(xval*xval))
+            yval = int(round(xz * np.tan(phi)))
             # convert to top left origin
             xnew = xval + w
             ynew = h - yval
-            if 0 <= xnew <= width and 0<= ynew <= height:
-                corresponding_pixel = (xnew, ynew)
-                common_pixels.append([(xpos, ypos), corresponding_pixel])
-                other_image_exclusion.append(corresponding_pixel)
-                count +=1
+            #original_pixel = (ypos,xpos)
+            #corresponding_pixel = (ynew, xnew)
+            if 0 <= xnew < width and 0<= ynew < height:
+                #common_pixels.append([original_pixel, corresponding_pixel])
+                #other_image_exclusion.append(corresponding_pixel)
+                ref_map[ypos, xpos] = 1
+                new_map[ynew, xnew] = 1
+                common +=1
+                a = primary_smap[ypos,xpos]
+                b = sac_smap[ynew,xnew]
+                maxJC = maxJC + max(a,b)
+                minJC = minJC + min(a,b)
             else:
-                only_start_image_pixels.append((xpos, ypos))
+                new +=1
+                #only_start_image_pixels.append(original_pixel)        # in numpy array order
+    if maxJC != 0:
+        jc = minJC/maxJC
+    else:
+        jc = 0
+    return ref_map, new_map, jc
+    #return common_pixels, only_start_image_pixels, other_image_exclusion
 
-    for xp in range(width):          # xp in frame 2 - column
-        for yp in range(height):     # yp in frame 2 - row
-            if (xp,yp) not in other_image_exclusion:
-                other_image_pixels.append((xp,yp))
-
-    return common_pixels, only_start_image_pixels, other_image_pixels
 
 
 def scale_image(some_image, new_max = 150):
@@ -234,6 +250,7 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, frame_no, f
     '''
 
     R = R2.inverse() * R1   # Rotation from current frame to previous frame
+    #R = np.quaternion(1, 0, 0, 0)
     w = width / 2           # corresponds to x-axis or column
     h = height / 2          # y-axis or row
     new_list = []
@@ -254,9 +271,13 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, frame_no, f
         uxz = np.sqrt(ux * ux + uz * uz)
         theta = np.arcsin(ux / uxz)  # z is never zero, theta is the rotation angle about y-axis - yaw angle
         phi = np.arcsin(uy)  # x is the angle about x - pitch angle
+
+        print(f"Theta = {np.rad2deg(theta)}, Phi = {np.rad2deg(phi)}")
         # compute x,y (z = -focal length)
         xval = focal_distance * np.tan(theta)
-        yval = focal_distance * np.tan(phi)
+        xzval = np.sqrt(xval*xval+focal_distance*focal_distance)
+        #yval = focal_distance * np.tan(phi)
+        yval = xzval * np.tan(phi)
         # convert to top left origin
         xn = math.floor(xval + w)
         yn = math.floor(h - yval)

@@ -247,14 +247,14 @@ if __name__ == "__main__":
     #plot_interpolated_lefteye(interp_val)
     #plot_interpolated_righteye(interp_val)
     #move_in_yaw(120.0)
-    move_x_and_z(9.0,0.0,2.0)
+    #move_x_and_z(9.0,0.0,2.0)
 
     while (1):
-        #robot.UpdManCtrl()
+        robot.UpdManCtrl()
         #robot.UpdManCtrl_new()
         #robot.UpdManCtrl_test()
 
-
+        '''
         for i in angle_pos_list:
             #robot.move_eyes_to_pos(i[4:8])
             collide, l_orn, right_orn = robot.move_eyes_to_position_and_return_orn(i[4:8])
@@ -268,7 +268,7 @@ if __name__ == "__main__":
             #print("Angles = {} - Rotation of Left eye q {}".format(i[:4],q))
             #print("State = {}".format(state))
 
-
+        '''
         keys = robot.GetKeyEvents()
         if 'c' in keys:
             robot.CheckAllCollisions()

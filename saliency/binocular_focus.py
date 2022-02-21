@@ -142,6 +142,8 @@ if __name__ == "__main__":
             plt.imshow(match_image)
             plt.show()
             new_image = agent_oreo.capture_binocular_fixation_images(agent_state, fix_row, fix_col, loc[0], loc[1])
+            plt.imshow(new_image)
+            plt.show()
         else:
             print(f"Patch boundaries{r1}:{r2} or {c1}:{c2} should be within the image shape {l_image.shape}")
 

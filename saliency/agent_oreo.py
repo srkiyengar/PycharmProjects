@@ -1193,10 +1193,11 @@ class OreoPyBulletSim(object):
             return 0
 
 
-pybullet_sim = OreoPyBulletSim("/Users/rajan/mytest/")
+
 
 if __name__ == "__main__":
 
+    pybullet_sim = OreoPyBulletSim("/Users/rajan/mytest/")
     oreo_in_habitat = agent_oreo(scene, dest_folder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])

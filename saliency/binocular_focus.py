@@ -105,9 +105,10 @@ def get_image_and_salmap(filename):
 
 if __name__ == "__main__":
 
+    oreo_in_habitat = agent_oreo.agent_oreo(agent_oreo.scene, agent_oreo.dest_folder, agent_oreo.pyBfolder,
+                                            depth_camera=False, loc_depth_cam='c', foveation=False)
     my_file = datafile_location + datafile_name
     l_image, r_image, l_points, r_points, agent_state = get_image_and_salmap(my_file)
-
     l_image_with_points = display_image_with_salpoints(l_image,l_points)
     r_image_with_points = display_image_with_salpoints(r_image, r_points)
 
@@ -141,9 +142,10 @@ if __name__ == "__main__":
             match_image = display_image_showing_match(l_image,[fix_row,fix_col],r_image, loc, wide=6)
             plt.imshow(match_image)
             plt.show()
-            new_image = agent_oreo.capture_binocular_fixation_images(agent_state, fix_row, fix_col, loc[0], loc[1])
-            plt.imshow(new_image)
-            plt.show()
+            new_image = oreo_in_habitat.capture_binocular_fixation_images(agent_state, fix_row, fix_col, loc[0], loc[1])
+            if new_image is not None:
+                plt.imshow(new_image)
+                plt.show()
         else:
             print(f"Patch boundaries{r1}:{r2} or {c1}:{c2} should be within the image shape {l_image.shape}")
 

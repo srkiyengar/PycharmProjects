@@ -22,7 +22,7 @@ sensor_resolution = [512,512]
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
 scene = "../multi_agent/data_files/van-gogh-room.glb"
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
-
+pyBfolder = "/Users/rajan/mytest/"
 
 
 def homogenous_transform(R, vect):
@@ -244,9 +244,9 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
 
 class agent_oreo(object):
     # constructor
-    def __init__(self, scene, result_folder, depth_camera=False, loc_depth_cam = 'c', foveation=False):
+    def __init__(self, scene, result_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False):
 
-
+        self.pybullet_sim = OreoPyBulletSim(pyBfolder)
         self.agent_config = habitat_sim.AgentConfiguration()
         # Left sensor - # oreo perspective - staring at -ive z
         self.left_sensor = habitat_sim.CameraSensorSpec()
@@ -438,7 +438,7 @@ class agent_oreo(object):
         """
 
         new_headneck_orn = self.agent_head_neck_rotation * rot_quat
-        result = pybullet_sim.is_valid_head_neck_rotation(new_headneck_orn)
+        result = self.pybullet_sim.is_valid_head_neck_rotation(new_headneck_orn)
         if result == 1:
             current_agent_state = self.agent.get_state()
             # save the inverse of the agent rotation before the head-neck rotation
@@ -676,7 +676,7 @@ class agent_oreo(object):
         new_dir_right_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_rightsensor_wrt_agentframe.T)
         yaw_righteye_pyB, pitchrighteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_right_pyBframe )
         print(f"Desire to move to yawR = {yaw_righteye_pyB}, pitchR = {pitchrighteye_pyB}")
-        result = pybullet_sim.is_valid_saccade([yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB])
+        result = self.pybullet_sim.is_valid_saccade([yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB])
         if result[0] == 1:
             print("Moving Sensors to new position")
             leftSensorRotation_wrt_agent = result[1]
@@ -1110,7 +1110,7 @@ class agent_oreo(object):
         :rtype: ndarray
         '''
 
-        self.setup_agent_state(orn_info)
+        self.restore_state(self.setup_agent_state(orn_info))
         # column value is x or width, row value is y or height
         success = self.saccade_to_new_point(lcol, lrow, rcol, rrow)
         if success == 1:
@@ -1197,8 +1197,7 @@ class OreoPyBulletSim(object):
 
 if __name__ == "__main__":
 
-    pybullet_sim = OreoPyBulletSim("/Users/rajan/mytest/")
-    oreo_in_habitat = agent_oreo(scene, dest_folder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
+    oreo_in_habitat = agent_oreo(scene, dest_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
     delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/36,0.0])

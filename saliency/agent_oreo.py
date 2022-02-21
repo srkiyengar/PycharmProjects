@@ -427,7 +427,7 @@ class agent_oreo(object):
             return agent_orientation, agent_position, s1, s2
 
 
-    def rotate_head_neck(self, rot_quat, oreo_py):
+    def rotate_head_neck(self, rot_quat):
         """
         rot_quat: rotation in quaternion of the head/neck with respect to it current orientation.
         oreo_py: The oreo pybullet simulation object. Use this function to rotate the head neck
@@ -438,7 +438,7 @@ class agent_oreo(object):
         """
 
         new_headneck_orn = self.agent_head_neck_rotation * rot_quat
-        result = oreo_py.is_valid_head_neck_rotation(new_headneck_orn)
+        result = pybullet_sim.is_valid_head_neck_rotation(new_headneck_orn)
         if result == 1:
             current_agent_state = self.agent.get_state()
             # save the inverse of the agent rotation before the head-neck rotation
@@ -1395,23 +1395,19 @@ if __name__ == "__main__":
             print(f"Mouse positions x: {mouseX} and y: {mouseY}")
             continue
         elif k == ord('y'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,5*np.pi/180,0]),
-                                             )
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,5*np.pi/180,0]))
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('x'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5*np.pi/180, 0]),
-                                             )
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5*np.pi/180, 0]))
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('g'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5*np.pi/180,0,0]),
-                                             )
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5*np.pi/180,0,0]))
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('h'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5*np.pi/180,0,0]),
-                                             )
+            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5*np.pi/180,0,0]))
             display_image(oreo_in_habitat.my_images)
             continue
         else:

@@ -15,13 +15,15 @@ import matplotlib.pyplot as plt
 
 
 eye_separation = 0.058
+#sensor_resolution = [512,512]
 sensor_resolution = [512,512]
-#sensor_resolution = [256,256]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
 scene = "../multi_agent/data_files/van-gogh-room.glb"
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
+
+
 
 def homogenous_transform(R, vect):
     """
@@ -107,7 +109,7 @@ def compute_eye_saccade_from_PyBframe(eye_rot):
     return (R_HA_to_PyB * eye_rot) * R_PyB_to_HA
 
 
-def display_image(images, left=True, right=True):
+def display_image(images, left=True, right=True, left_right=True):
 
     a = len(images)
     left_img = images[0]
@@ -118,18 +120,21 @@ def display_image(images, left=True, right=True):
     left_img = left_img[..., 0:3][..., ::-1]
     right_img = right_img[..., 0:3][..., ::-1]
 
-    if a == 2:
-        if left:
-            cv2.imshow("Left_eye", left_img)
-            #get_image_patch(images[0],256,256,50)
-        if right:
-            cv2.imshow("Right_eye", right_img)
-    elif a == 3:
-        if left:
-            cv2.imshow("Left_eye", left_img)
-        if right:
-            cv2.imshow("Right_eye", right_img)
-        cv2.imshow("Depth", images[2]/10)
+    if left_right:
+        cv2.imshow("Left-Right",np.concatenate((left_img,right_img), axis=1))
+    else:
+        if a == 2:
+            if left:
+                cv2.imshow("Left_eye", left_img)
+                # get_image_patch(images[0],256,256,50)
+            if right:
+                cv2.imshow("Right_eye", right_img)
+        elif a == 3:
+            if left:
+                cv2.imshow("Left_eye", left_img)
+            if right:
+                cv2.imshow("Right_eye", right_img)
+            cv2.imshow("Depth", images[2] / 10)
 
     return
 
@@ -251,6 +256,7 @@ class agent_oreo(object):
         self.left_sensor.uuid = "left_rgb_sensor"
         self.left_sensor.position = [-eye_separation / 2, 0.0, 0.0]
         self.left_sensor.orientation = np.array([0.0,0.0,0.0], dtype=float)
+        self.left_sensor.far = 256
 
 
         # Right sensor - # oreo perspective - staring at -ive z
@@ -261,6 +267,7 @@ class agent_oreo(object):
         self.right_sensor.uuid = "right_rgb_sensor"
         self.right_sensor.position = [eye_separation / 2, 0.0, 0.0]
         self.right_sensor.orientation = np.array([0.0, 0.0, 0.0], dtype=float)
+        self.right_sensor.far = 256
         # self.right_sensor.hfov = 85
 
         # Depth camera - At the origin of the reference coordinate axes (habitat frame)
@@ -332,6 +339,15 @@ class agent_oreo(object):
     def get_current_state(self):
         return self.agent.get_state()
 
+
+    def print_agent_loc_orn(self):
+        my_state = self.get_current_state()
+        current_agent_rotation = my_state.rotation
+        current_agent_position = my_state.position
+        left_sensor_rotation = my_state.sensor_states["left_rgb_sensor"].rotation
+        right_sensor_rotation = my_state.sensor_states["right_rgb_sensor"].rotation
+        print(f"Current position = {current_agent_position}")
+        print(f"Current rotation = {quaternion.as_rotation_vector(current_agent_rotation)}")
 
     def get_current_state_with_head_neck_rotation(self):
         my_state = []
@@ -612,8 +628,8 @@ class agent_oreo(object):
         yval = (self.left_sensor.resolution[1] / 2) - yt  # height
         return xval, yval
 
-    # empty
-    def saccade_to_new_point(self, xLeft, yLeft, xRight, yRight, oreo_pyb_sim):
+
+    def saccade_to_new_point(self, xLeft, yLeft, xRight, yRight):
         """
 
         :param xLeft: x position in pixels of Left sensor frame with 0,0 at top left
@@ -660,7 +676,7 @@ class agent_oreo(object):
         new_dir_right_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_rightsensor_wrt_agentframe.T)
         yaw_righteye_pyB, pitchrighteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_right_pyBframe )
         print(f"Desire to move to yawR = {yaw_righteye_pyB}, pitchR = {pitchrighteye_pyB}")
-        result = oreo_pyb_sim.is_valid_saccade([yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB])
+        result = pybullet_sim.is_valid_saccade([yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB])
         if result[0] == 1:
             print("Moving Sensors to new position")
             leftSensorRotation_wrt_agent = result[1]
@@ -765,7 +781,7 @@ class agent_oreo(object):
         output.append(self.left_sensor.resolution)
         output.append(self.left_sensor_hfov)
         output.append(self.focal_distance)
-        images = self.my_images[0][..., 0:3], None
+        images = self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]
         output.append(images)           # Left and Right RGB images
 
         self.start_image_filenameRGB = image_filename + "RGB0"
@@ -812,7 +828,7 @@ class agent_oreo(object):
             i = salpoint_data[5][img_num]
             new_x = i[1]        # column value is x or width
             new_y = i[0]        # row value is y or height
-            success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+            success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
             if success == 1:
                 fig, ax = plt.subplots()
                 ax.imshow(self.my_images[0])
@@ -826,7 +842,7 @@ class agent_oreo(object):
             self.restore_state(start_image_agent_state)
             new_x = i[1]
             new_y = i[0]
-            success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+            success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
             if success == 1:
                 aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
             return
@@ -870,7 +886,7 @@ class agent_oreo(object):
                         self.restore_state(start_image_agent_state)
                         new_x = i[1]    # x-axis is column (width) and y-axis is row (height) of the image
                         new_y = i[0]
-                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
                         if success == 1:
                             aorn, apos, l_sensor_orn, _ = self.get_agent_sensor_position_orientations()
                             val = [aorn, apos, self.agent_head_neck_rotation, l_sensor_orn,
@@ -884,7 +900,7 @@ class agent_oreo(object):
                         self.restore_state(start_image_agent_state)
                         new_x = i[1]
                         new_y = i[0]
-                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
                         if success == 1:
                             aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
                             val = [aorn, apos, self.agent_head_neck_rotation, r_sensor_orn,
@@ -944,7 +960,7 @@ class agent_oreo(object):
                         self.restore_state(start_image_agent_state)
                         new_x = i[1]    # x-axis is column (width) and y-axis is row (height) of the image
                         new_y = i[0]
-                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
                         if success == 1:
                             aorn, apos, l_sensor_orn, _ = self.get_agent_sensor_position_orientations()
                             image_left = self.my_images[0][..., 0:3]
@@ -956,7 +972,7 @@ class agent_oreo(object):
                         self.restore_state(start_image_agent_state)
                         new_x = i[1]
                         new_y = i[0]
-                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pybullet_sim)
+                        success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
                         if success == 1:
                             aorn, apos, _, r_sensor_orn = self.get_agent_sensor_position_orientations()
                             image_right = self.my_images[1][..., 0:3]
@@ -1043,7 +1059,7 @@ class agent_oreo(object):
                             if val is True:
                                 continue
                             else:
-                                success = self.saccade_to_new_point(new_x, new_y, new_x, new_y, pyB_sim)
+                                success = self.saccade_to_new_point(new_x, new_y, new_x, new_y)
                                 if success == 1:
                                     aorn, apos, l_sensor_orn, _ = self.get_agent_sensor_position_orientations()
                                     image_left = self.my_images[0][..., 0:3]
@@ -1084,14 +1100,36 @@ class agent_oreo(object):
             return None
 
 
+    def capture_binocular_fixation_images(self, orn_info, lrow, lcol, rrow, rcol):
+        '''
+        :param orn_info: agent and sensor states
+        :type : list agent-rotation is [0], agent-position is [1], left sensor rot [2] and right sensor rot is [3]
+        :param image_points: left and right row columns
+        :type img_num: list[[r,c]-left, [r,c]-right]
+        :return: right and left images concatenated
+        :rtype: ndarray
+        '''
+
+        self.setup_agent_state(orn_info)
+        # column value is x or width, row value is y or height
+        success = self.saccade_to_new_point(lcol, lrow, rcol, rrow)
+        if success == 1:
+            return np.concatenate((self.my_images[0],self.my_images[1]),axis=1)
+        else:
+            print(f"Unsuccessful in moving to left [{lrow},{lcol}] and right [{rrow},{rcol}]")
+            return None
+
+
     def print_agent_leftsensor_pos_orn(self):
 
         my_agent_state = self.agent.get_state()
         agent_rot_axis_angle = quaternion.as_rotation_vector(my_agent_state.rotation)
         left_sensor_axis_angle = \
-            quaternion.as_rotation_vector(my_agent_state.sensor_states['left_rgb_sensor'].rotation)
+            np.rad2deg(quaternion.as_rotation_vector(my_agent_state.sensor_states['left_rgb_sensor'].rotation))
+        left_sensor_pos = my_agent_state.sensor_states['left_rgb_sensor'].position
         print(f"Agent rotation = {agent_rot_axis_angle}\nAgent position = {my_agent_state.position}\n"
-              f"Left sensor rotation = {left_sensor_axis_angle}")
+              f"Left sensor rotation = {left_sensor_axis_angle}"
+              f"Left sensor position = {left_sensor_pos}")
 
 
 class OreoPyBulletSim(object):
@@ -1155,14 +1193,15 @@ class OreoPyBulletSim(object):
             return 0
 
 
+pybullet_sim = OreoPyBulletSim("/Users/rajan/mytest/")
+
 if __name__ == "__main__":
 
-    pybullet_sim = OreoPyBulletSim("/Users/rajan/mytest/")
     oreo_in_habitat = agent_oreo(scene, dest_folder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/30,0.0])
-    delta_ang_cw = quaternion.from_rotation_vector([0.0, -2*np.pi/30, 0.0])
+    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/36,0.0])
+    delta_ang_cw = quaternion.from_rotation_vector([0.0, -2*np.pi/36, 0.0])
     w = sensor_resolution[0]
     h = sensor_resolution[1]
     left = 1
@@ -1250,12 +1289,16 @@ if __name__ == "__main__":
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('f'):
+            print(f"Move forward by {delta_move}")
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, -delta_move])
             display_image(oreo_in_habitat.my_images)
+            oreo_in_habitat.print_agent_leftsensor_pos_orn()
             continue
         elif k == ord('b'):
+            print(f"Move backbward by {delta_move}")
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, delta_move])
             display_image(oreo_in_habitat.my_images)
+            oreo_in_habitat.print_agent_leftsensor_pos_orn()
             continue
         elif k == ord('u'):
             oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, delta_move, 0.0])
@@ -1325,49 +1368,49 @@ if __name__ == "__main__":
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('z'):
-            oreo_in_habitat.saccade_to_new_point((w/2)+8,(h/2)+8,w/2,h/2, pybullet_sim)
+            oreo_in_habitat.saccade_to_new_point((w/2)+8,(h/2)+8,w/2,h/2)
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('p'):
-            oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2, pybullet_sim)
+            oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2)
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('l'):
             print(f"Move Left count --{left}--")
             xL = (w/2)-8
             yL = h/2
-            oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL, pybullet_sim)
+            oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL)
             left += 1
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('r'):
             print(f"Move Right count --{right}-")
             right  += 1
-            oreo_in_habitat.saccade_to_new_point((w/2)+8,h/2,(w/2)+8,h/2, pybullet_sim)
+            oreo_in_habitat.saccade_to_new_point((w/2)+8,h/2,(w/2)+8,h/2)
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('d'):
-            #oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8, pybullet_sim)
+            #oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8)
             print(f"Mouse positions x: {mouseX} and y: {mouseY}")
             continue
         elif k == ord('y'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,5*np.pi/180,0]),
-                                             pybullet_sim)
+                                             )
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('x'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5*np.pi/180, 0]),
-                                             pybullet_sim)
+                                             )
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('g'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5*np.pi/180,0,0]),
-                                             pybullet_sim)
+                                             )
             display_image(oreo_in_habitat.my_images)
             continue
         elif k == ord('h'):
             oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5*np.pi/180,0,0]),
-                                             pybullet_sim)
+                                             )
             display_image(oreo_in_habitat.my_images)
             continue
         else:

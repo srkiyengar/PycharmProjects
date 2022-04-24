@@ -21,6 +21,7 @@ sensor_resolution = [512,512]
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
 scene = "../multi_agent/data_files/van-gogh-room.glb"
+physics_config_file = "../multi_agent/data_files/default.physics_config.json"
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 pyBfolder = "/Users/rajan/mytest/"
 
@@ -108,6 +109,14 @@ def compute_eye_saccade_from_PyBframe(eye_rot):
 
     return (R_HA_to_PyB * eye_rot) * R_PyB_to_HA
 
+
+def display_single_frame(frame, num):
+
+    # cv2.imshow require BGR using img = img[..., ::-1]
+
+    my_frame = frame[..., 0:3][..., ::-1]
+    cv2.imshow(str(num), my_frame)
+    return
 
 def display_image(images, left=True, right=True, left_right=True):
 
@@ -229,7 +238,7 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
         phi = np.arcsin(uy)          # x is the angle wrt to z
         # compute x,y (z = -focal length)
         xval = focal_distance*np.tan(theta)
-        yval = focal_distance*np.tan(phi)
+        yval = focal_distance*np.tan(phi) # This is incorrect - it should be magnitude(xz)*tan(phi)
         # convert to top left origin
         xn = xval + w
         yn = h - yval
@@ -244,7 +253,7 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
 
 class agent_oreo(object):
     # constructor
-    def __init__(self, scene, result_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False):
+    def __init__(self, scene, result_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False, phys=False):
 
         self.pybullet_sim = OreoPyBulletSim(pyBfolder)
         self.agent_config = habitat_sim.AgentConfiguration()
@@ -295,6 +304,10 @@ class agent_oreo(object):
 
         if foveation:
             self.backend_cfg.foveation_distortion = True
+
+        if phys:
+            self.backend_cfg.enable_physics = True
+            self.backend_cfg.physics_config_file = physics_config_file
 
         #self.backend_cfg.scene.id = scene   #This works in older habitat versions
         self.backend_cfg.scene_id = scene #newer versions like the colab install
@@ -366,6 +379,18 @@ class agent_oreo(object):
         new_agent_state.sensor_states["right_rgb_sensor"].position = new_state[1]
         return new_agent_state
 
+    def set_and_capture_depth(self,agent_info):
+        '''
+        agent_info[0] is agent position, agent_info[1] is lefteye orn
+        lefteye orn is the rotation of depth camera with respect to WCS
+        It is Agent rotation * Depth sensor rotation wrt agent
+        '''
+        new_agent_state = self.agent.get_state()
+        new_agent_state.sensor_states["depth_sensor"].position = agent_info[0]
+        new_agent_state.sensor_states["depth_sensor"].rotation = agent_info[1]
+        self.agent.set_state(new_agent_state, infer_sensor_states=False)
+        self.sim._sensors['depth_sensor'].draw_observation()
+        return self.sim._sensors['depth_sensor'].get_observation()
 
     def restore_state(self,new_astate):
         self.agent.set_state(new_astate, infer_sensor_states=False)
@@ -602,6 +627,57 @@ class agent_oreo(object):
 
         self.agent.set_state(my_agent_state, infer_sensor_states=False)
         self.my_images = self.get_sensor_observations()
+
+
+    def insert_rigid_object_easy(self, pos =[1.50, 1.0, 1.5]):
+        my_sim = self.sim
+        #prim_templates_mgr = my_sim.get_asset_template_manager()
+        obj_templates_mgr = my_sim.get_object_template_manager()
+        sphere_template_id = obj_templates_mgr.load_configs("../multi_agent/data_files/test_assets/objects/sphere")[0]
+        # sphere_template.scale = np.array([0.5, 0.5, 0.5])
+        #object_lib_size = my_sim.get_physics_object_library_size()
+        #print(f"Object library size {object_lib_size}")
+        id_1 = my_sim.add_object(sphere_template_id)
+        pos = np.array(pos)
+        my_sim.set_translation(pos, id_1)
+        return id_1
+        pass
+
+    def insert_rigid_object(self, sample = "sphere"):
+        my_sim = self.sim
+        obj_templates_mgr = my_sim.get_object_template_manager()
+        obj_templates_mgr.load_configs("../multi_agent/data_files/test_assets/objects/", True)
+        rigid_obj_mgr = my_sim.get_rigid_object_manager()
+        #obj_handle_list = obj_templates_mgr.get_template_handles(sample)
+        obj_handle_list = obj_templates_mgr.get_template_handles(sample)
+        total_templates = obj_templates_mgr.get_num_templates()
+        object_template_id = obj_handle_list[0]
+        # sphere_template.scale = np.array([0.5, 0.5, 0.5])
+        red_sphere = rigid_obj_mgr.add_object_by_template_handle(object_template_id)
+        red_sphere.translation = [1.50, 1.0, 1.5]
+        #my_sim.set_translation(np.array([1.50, 1.0, 1.0]), red_sphere)
+
+        pass
+
+
+
+
+
+    def simulate_motion(self, dt=2.0, get_frames=True):
+
+        my_frames = []
+        my_sim = self.sim
+        start_time = my_sim.get_world_time()
+        i = 0
+        while my_sim.get_world_time() < start_time + dt:
+            my_sim.step_physics(1.0 / 60.0)
+            if get_frames:
+                print(f"Inside simulation {i}")
+                self.my_images = self.get_sensor_observations()
+                display_image(oreo_in_habitat.my_images)
+                my_frames.append(self.my_images)
+                i += 1
+        return my_frames
 
     def compute_uvector_for_image_point(self, x_pos, y_pos):
         """
@@ -1012,11 +1088,10 @@ class agent_oreo(object):
         This is the version used when DeepGaze II and habitat are integrated in collab.
         :param p_file: processed file name including the complete path
         :type p_file: string
-        :param num: image number corresponding to the processed saliency file.
         0 means pfile corresponds to the first or start image.
         1 means pfile corresponds to the 2nd image from the highest saliency of the image in pfile 0
         Each pfile info is used to saccade to the highest saccadable point of the saliency map from the
-        previous image (No IOR implemented) and take a new image to create a new imagefile.
+        previous image to create a new iimagefile.
         if num = 0 then the new image will end with "RGB" + string of num + 1
         :type num: int
         :param ior_list contains a list of left_eye orientation wrt WCS
@@ -1100,7 +1175,7 @@ class agent_oreo(object):
             return None
 
 
-    def capture_binocular_fixation_images(self, orn_info, lrow, lcol, rrow, rcol):
+    def capture_binocular_fixation_images(self, orn_info, left_p, right_p):
         '''
         :param orn_info: agent and sensor states
         :type : list agent-rotation is [0], agent-position is [1], left sensor rot [2] and right sensor rot is [3]
@@ -1110,14 +1185,21 @@ class agent_oreo(object):
         :rtype: ndarray
         '''
 
+        lrow = left_p[0]
+        lcol = left_p[1]
+        rrow = right_p[0]
+        rcol = right_p[1]
+
         self.restore_state(self.setup_agent_state(orn_info))
         # column value is x or width, row value is y or height
         success = self.saccade_to_new_point(lcol, lrow, rcol, rrow)
         if success == 1:
-            return np.concatenate((self.my_images[0],self.my_images[1]),axis=1)
+            return [self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]],\
+                   self.get_current_state(),self.focal_distance
+            #return np.concatenate((self.my_images[0],self.my_images[1]),axis=1)
         else:
             print(f"Unsuccessful in moving to left [{lrow},{lcol}] and right [{rrow},{rcol}]")
-            return None
+            return None, None, None
 
 
     def print_agent_leftsensor_pos_orn(self):
@@ -1197,7 +1279,11 @@ class OreoPyBulletSim(object):
 
 if __name__ == "__main__":
 
-    oreo_in_habitat = agent_oreo(scene, dest_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False)
+    oreo_in_habitat = agent_oreo(scene, dest_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False, phys=True)
+    #oreo_in_habitat.insert_rigid_object()
+    my_obj = oreo_in_habitat.insert_rigid_object_easy()
+    #oreo_in_habitat.insert_rigid_object_easy(pos = [.50, 0.6, 1.0])
+    #oreo_in_habitat.simulate_motion()
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
     delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/36,0.0])
@@ -1209,207 +1295,260 @@ if __name__ == "__main__":
     image_number = 0
     display_image(oreo_in_habitat.my_images)
     cv2.setMouseCallback('Left_eye', get_mouse_2click)
+
+    move_step = np.array([0.0, 0.002, 0.002])
+    move_count = 0
+    pos = np.array([.50, 0.6, 1.0])
+    simulate = False
+    start_time = oreo_in_habitat.sim.get_world_time()
+    dtime = 0.0
+    frames = []
     while (1):
+        curr_time = oreo_in_habitat.sim.get_world_time()
+        if simulate is True:
+            if (curr_time < (start_time+dtime)):     #start_time, dtime has to be set when simulate is set to True
+                oreo_in_habitat.sim.step_physics(2.0 / 60.0)
+                oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
+                move_count += 1
+                print(f"Simulating {move_count}")
+                frames.append(oreo_in_habitat.my_images[0])
+            else:
+                simulate = False
+                dtime = 0
+                display_image(oreo_in_habitat.my_images)
+        else:
+            k = cv2.waitKey(0)
+            if k == ord('q'):
+                break
+            elif k == ord("0"):
+                oreo_in_habitat.capture_start_image_for_saliency_colab()
+                continue
+            elif k == ord("1"):
+                # take the processed saliency file to capture salient images and related information
+                processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results-skok/"
+                for root, dirs, files in os.walk(processed_dir):
+                    for filename in files:
+                        if "-sal-processed" in filename:
+                            p_salfile = processed_dir + filename
+                            related_images = oreo_in_habitat.capture_images_for_fixations(p_salfile)
+                continue
+            elif k == ord("2"):
+                # take the processed saliency file to capture salient images and related information
+                processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+                filename = "van-gogh-room.glb^2021-07-04-14-25-14-sal-processed"
+                p_salfile = processed_dir + filename
+                robot_current_state = oreo_in_habitat.get_current_state()  # saving the current robot state
+                # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
+                _, scene_name = os.path.split(oreo_in_habitat.backend_cfg.scene_id)
+                _, scenename_salfile = os.path.split(p_salfile)
+                d = scenename_salfile.find("^")
+                if d == -1:
+                    print(f"The saliency file name {scenename_salfile} is missing the ^ char")
+                    print(f"Not capturing image from Fixation points")
+                else:
+                    if scene_name != scenename_salfile[0:d]:
+                        print(f"Saliency file {scenename_salfile} does not belong to scene {scene_name}")
+                    else:
+                        img_data = oreo_in_habitat.capture_images_for_fixations(p_salfile)
+                        oreo_in_habitat.restore_state(robot_current_state)
+                        display_image(oreo_in_habitat.my_images)
+                        continue
+            elif k == ord("3"):
+                processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+                filename = "van-gogh-room.glb^2021-09-26-08-58-31RGB9-sal-processed"
+                count = 9
+                oreo_in_habitat.capture_next_image_from_fixations(processed_dir, filename, count)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord("4"):
+                # take the processed saliency file to capture salient images and related information
+                processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
+                filename = "van-gogh-room.glb^2021-07-04-14-23-07-sal-processed"
+                p_salfile = processed_dir + filename
+                robot_current_state = oreo_in_habitat.get_current_state()  # saving the current robot state
+                # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
+                _, scene_name = os.path.split(oreo_in_habitat.backend_cfg.scene_id)
+                _, scenename_salfile = os.path.split(p_salfile)
+                d = scenename_salfile.find("^")
+                if d == -1:
+                    print(f"The saliency file name {scenename_salfile} is missing the ^ char")
+                    print(f"Not capturing image from Fixation points")
+                else:
+                    if scene_name != scenename_salfile[0:d]:
+                        print(f"Saliency file {scenename_salfile} does not belong to scene {scene_name}")
+                    else:
+                        if (image_number < 10):
+                            limage = oreo_in_habitat.capture_fixation_image(p_salfile, image_number)
+                            image_number += 1
+                        display_image(oreo_in_habitat.my_images)
+                        continue
+            elif k == ord('5'):
+                oreo_in_habitat.restore_state(robot_current_state)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('6'):  # testing capture_next_image_from_fixations_colab
+                myfile = "/Users/rajan/PycharmProjects/saliency/saliency_map/van-gogh-room.glb^2021-09-26-08-58-31RGB8-sal-processed"
+                oreo_in_habitat.capture_next_image_from_fixations_colab(myfile, num=8)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('7'):
+                simulate = True
+                dtime = 1.0
+                start_time = oreo_in_habitat.sim.get_world_time()
+                # oreo_in_habitat.simulate_motion()
+                '''
+                pos = pos + move_count * move_step
+                print(f"Red sphere position = {pos}")
+                oreo_in_habitat.sim.set_translation(pos, my_obj)
+                oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
+                display_image(oreo_in_habitat.my_images)
+                move_count +=1
+                '''
+                continue
+            elif k == ord('8'):
+                # oreo_in_habitat.simulate_motion()
+                pos = pos - move_count * move_step
+                print(f"Red sphere position = {pos}")
+                oreo_in_habitat.sim.set_translation(pos, my_obj)
+                oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
+                display_image(oreo_in_habitat.my_images)
+                move_count += 1
+                continue
+            elif k == ord('n'):
+                oreo_in_habitat.reset_state()
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('f'):
+                print(f"Move forward by {delta_move}")
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, -delta_move])
+                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                continue
+            elif k == ord('b'):
+                print(f"Move backbward by {delta_move}")
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, delta_move])
+                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                continue
+            elif k == ord('u'):
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, delta_move, 0.0])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('v'):
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, -delta_move, 0.0])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('s'):
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [delta_move, 0.0, 0.0])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('t'):
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, [-delta_move, 0.0, 0.0])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('j'):
+                # default agent position is 0.9539339  0.1917877 12.163067
+                m = [0.9539339, 0.1917877, 11.0]
+                oreo_in_habitat.move_and_rotate_agent(ang_quat, m, "absolute")
+                display_image(oreo_in_habitat.my_images)
+                continue
+
+            elif k == ord('a'):
+                print("****>Rotating clockwise")
+                oreo_in_habitat.move_and_rotate_agent(delta_ang_cw, [0.0, 0.0, 0.0])
+                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('c'):
+                print("---->Rotating counter-clockwise")
+                oreo_in_habitat.move_and_rotate_agent(delta_ang_ccw, [0.0, 0.0, 0.0])
+                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('x'):
+                # oreo_in_habitat.reset_state()
+                dc = oreo_in_habitat.compute_uvector_for_image_point(w / 4, h / 4)
+                rot_quat = calculate_rotation_to_new_direction(dc)
+                oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('9'):
+                # oreo_in_habitat.reset_state()
+                dc = oreo_in_habitat.compute_uvector_for_image_point(3 * w / 4, 3 * h / 4)
+                rot_quat = calculate_rotation_to_new_direction(dc)
+                oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('e'):
+                oreo_in_habitat.reset_state()
+                dc = oreo_in_habitat.compute_uvector_for_image_point(0, h / 2)
+                rot_quat = calculate_rotation_to_new_direction(dc)
+                a = quaternion.from_rotation_vector([0, -1.0 * np.pi / 3, 0.0])
+                next_quat = rot_quat * a
+                print(f"Quaternion {rot_quat} at 0,h/2, next quat {next_quat}, a ={a}")
+                oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('w'):
+                oreo_in_habitat.reset_state()
+                dc = oreo_in_habitat.compute_uvector_for_image_point(w, h / 2)
+                rot_quat = calculate_rotation_to_new_direction(dc)
+                print(f"Quaternion {rot_quat} at w,h/2")
+                oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('z'):
+                oreo_in_habitat.saccade_to_new_point((w / 2) + 8, (h / 2) + 8, w / 2, h / 2)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('p'):
+                oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('l'):
+                print(f"Move Left count --{left}--")
+                xL = (w / 2) - 8
+                yL = h / 2
+                oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL)
+                left += 1
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('r'):
+                print(f"Move Right count --{right}-")
+                right += 1
+                oreo_in_habitat.saccade_to_new_point((w / 2) + 8, h / 2, (w / 2) + 8, h / 2)
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('d'):
+                # oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8)
+                print(f"Mouse positions x: {mouseX} and y: {mouseY}")
+                continue
+            elif k == ord('y'):
+                oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, 5 * np.pi / 180, 0]))
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('x'):
+                oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5 * np.pi / 180, 0]))
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('g'):
+                oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5 * np.pi / 180, 0, 0]))
+                display_image(oreo_in_habitat.my_images)
+                continue
+            elif k == ord('h'):
+                oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5 * np.pi / 180, 0, 0]))
+                display_image(oreo_in_habitat.my_images)
+                continue
+            else:
+                pass
+
+    cv2.destroyAllWindows()
+
+    for n,i in enumerate(frames):
+        display_single_frame(i,n)
         k = cv2.waitKey(0)
         if k == ord('q'):
             break
-        elif k == ord("0"):
-            oreo_in_habitat.capture_start_image_for_saliency_colab()
-            continue
-        elif k == ord("1"):
-            #take the processed saliency file to capture salient images and related information
-            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results-skok/"
-            for root, dirs, files in os.walk(processed_dir):
-                for filename in files:
-                    if "-sal-processed" in filename:
-                        p_salfile = processed_dir + filename
-                        related_images = oreo_in_habitat.capture_images_for_fixations(p_salfile)
-            continue
-        elif k == ord("2"):
-            #take the processed saliency file to capture salient images and related information
-            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
-            filename ="van-gogh-room.glb^2021-07-04-14-25-14-sal-processed"
-            p_salfile = processed_dir + filename
-            robot_current_state = oreo_in_habitat.get_current_state()  # saving the current robot state
-            # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
-            _, scene_name = os.path.split(oreo_in_habitat.backend_cfg.scene_id)
-            _, scenename_salfile = os.path.split(p_salfile)
-            d = scenename_salfile.find("^")
-            if d == -1:
-                print(f"The saliency file name {scenename_salfile} is missing the ^ char")
-                print(f"Not capturing image from Fixation points")
-            else:
-                if scene_name != scenename_salfile[0:d]:
-                    print(f"Saliency file {scenename_salfile} does not belong to scene {scene_name}")
-                else:
-                    img_data = oreo_in_habitat.capture_images_for_fixations(p_salfile)
-                    oreo_in_habitat.restore_state(robot_current_state)
-                    display_image(oreo_in_habitat.my_images)
-                    continue
-        elif k == ord("3"):
-            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
-            filename ="van-gogh-room.glb^2021-09-26-08-58-31RGB9-sal-processed"
-            count = 9
-            oreo_in_habitat.capture_next_image_from_fixations(processed_dir,filename,count)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord("4"):
-            #take the processed saliency file to capture salient images and related information
-            processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
-            filename ="van-gogh-room.glb^2021-07-04-14-23-07-sal-processed"
-            p_salfile = processed_dir + filename
-            robot_current_state = oreo_in_habitat.get_current_state()  # saving the current robot state
-            # compare processed_salfile and scene to make sure that it corresponds to the right initial image scene
-            _, scene_name = os.path.split(oreo_in_habitat.backend_cfg.scene_id)
-            _, scenename_salfile = os.path.split(p_salfile)
-            d = scenename_salfile.find("^")
-            if d == -1:
-                print(f"The saliency file name {scenename_salfile} is missing the ^ char")
-                print(f"Not capturing image from Fixation points")
-            else:
-                if scene_name != scenename_salfile[0:d]:
-                    print(f"Saliency file {scenename_salfile} does not belong to scene {scene_name}")
-                else:
-                    if (image_number < 10):
-                        limage = oreo_in_habitat.capture_fixation_image(p_salfile, image_number)
-                        image_number += 1
-                    display_image(oreo_in_habitat.my_images)
-                    continue
-        elif k == ord('5'):
-            oreo_in_habitat.restore_state(robot_current_state)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('6'): #testing capture_next_image_from_fixations_colab
-            myfile = "/Users/rajan/PycharmProjects/saliency/saliency_map/van-gogh-room.glb^2021-09-26-08-58-31RGB8-sal-processed"
-            oreo_in_habitat.capture_next_image_from_fixations_colab(myfile,num=8)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('n'):
-            oreo_in_habitat.reset_state()
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('f'):
-            print(f"Move forward by {delta_move}")
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, -delta_move])
-            display_image(oreo_in_habitat.my_images)
-            oreo_in_habitat.print_agent_leftsensor_pos_orn()
-            continue
-        elif k == ord('b'):
-            print(f"Move backbward by {delta_move}")
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, delta_move])
-            display_image(oreo_in_habitat.my_images)
-            oreo_in_habitat.print_agent_leftsensor_pos_orn()
-            continue
-        elif k == ord('u'):
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, delta_move, 0.0])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('v'):
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, -delta_move, 0.0])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('s'):
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [delta_move, 0.0, 0.0])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('t'):
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, [-delta_move, 0.0, 0.0])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('j'):
-            # default agent position is 0.9539339  0.1917877 12.163067
-            m = [0.9539339, 0.1917877, 11.0]
-            oreo_in_habitat.move_and_rotate_agent(ang_quat, m, "absolute")
-            display_image(oreo_in_habitat.my_images)
-            continue
 
-        elif k == ord('a'):
-            print("****>Rotating clockwise")
-            oreo_in_habitat.move_and_rotate_agent(delta_ang_cw, [0.0,0.0,0.0])
-            oreo_in_habitat.print_agent_leftsensor_pos_orn()
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('c'):
-            print("---->Rotating counter-clockwise")
-            oreo_in_habitat.move_and_rotate_agent(delta_ang_ccw, [0.0, 0.0, 0.0])
-            oreo_in_habitat.print_agent_leftsensor_pos_orn()
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('8'):
-            #oreo_in_habitat.reset_state()
-            dc = oreo_in_habitat.compute_uvector_for_image_point(w/4, h/4)
-            rot_quat = calculate_rotation_to_new_direction(dc)
-            oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat,rot_quat,rot_quat])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('9'):
-            #oreo_in_habitat.reset_state()
-            dc = oreo_in_habitat.compute_uvector_for_image_point(3*w/4, 3*h/4)
-            rot_quat = calculate_rotation_to_new_direction(dc)
-            oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat,rot_quat,rot_quat])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('e'):
-            oreo_in_habitat.reset_state()
-            dc = oreo_in_habitat.compute_uvector_for_image_point(0, h/2)
-            rot_quat = calculate_rotation_to_new_direction(dc)
-            a = quaternion.from_rotation_vector([0, -1.0 * np.pi / 3, 0.0])
-            next_quat = rot_quat * a
-            print(f"Quaternion {rot_quat} at 0,h/2, next quat {next_quat}, a ={a}")
-            oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('w'):
-            oreo_in_habitat.reset_state()
-            dc = oreo_in_habitat.compute_uvector_for_image_point(w, h/2)
-            rot_quat = calculate_rotation_to_new_direction(dc)
-            print(f"Quaternion {rot_quat} at w,h/2")
-            oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('z'):
-            oreo_in_habitat.saccade_to_new_point((w/2)+8,(h/2)+8,w/2,h/2)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('p'):
-            oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('l'):
-            print(f"Move Left count --{left}--")
-            xL = (w/2)-8
-            yL = h/2
-            oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL)
-            left += 1
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('r'):
-            print(f"Move Right count --{right}-")
-            right  += 1
-            oreo_in_habitat.saccade_to_new_point((w/2)+8,h/2,(w/2)+8,h/2)
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('d'):
-            #oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8)
-            print(f"Mouse positions x: {mouseX} and y: {mouseY}")
-            continue
-        elif k == ord('y'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0,5*np.pi/180,0]))
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('x'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5*np.pi/180, 0]))
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('g'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5*np.pi/180,0,0]))
-            display_image(oreo_in_habitat.my_images)
-            continue
-        elif k == ord('h'):
-            oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5*np.pi/180,0,0]))
-            display_image(oreo_in_habitat.my_images)
-            continue
-        else:
-            pass
-
+    pass
 

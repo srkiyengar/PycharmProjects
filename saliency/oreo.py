@@ -1408,10 +1408,10 @@ class Oreo_Robot(object):
 
         # Check link exists
         if name in self.jointDict:
+            linkId = self.jointDict[name]
             ret = p.getLinkState(self.linkage, self.jointDict[name], computeLinkVelocity=1)
             accel = self.linkVelo[linkId][self.VELO_IDX]
             ang_accel = self.linkVelo[linkId][self.ANG_VELO_IDX]
-            linkId = self.jointDict[name]
             for i in range(len(accel)):
                 accel = (accel[i] - ret[6][i]) / self.TIME_STEP
                 ang_accel = (ang_accel[i] - ret[7][i]) / self.TIME_STEP

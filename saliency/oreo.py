@@ -418,9 +418,15 @@ class Oreo_Robot(object):
             self.prev_pos = pos.copy()
             self.ControlActJoints(pos)
             self.actJointPos = pos
-            position = self.GetLinkPosOrn("left_eye_joint")[0]
-            orientation = self.GetLinkPosOrn("left_eye_joint")[1]
-            print("From Slider: {} Left eye Joint Orientation - {}".format(pos, orientation))
+            #joint_one = "left_eye_joint"
+            #"neck_joint", "pitch_piece_joint"
+            joint_one = "neck_joint"
+            joint_two = "pitch_piece_joint"
+            orientation1 = self.GetLinkPosOrn(joint_one)[1]
+            #position = self.GetLinkPosOrn(joint_one)[0]
+            #print("From Slider - Positions: {} Joint: {} Orientation: {}".format(pos, joint_one, orientation1))
+            print("From Slider - Pos {} Orientation: {}".format(pos, orientation1))
+
             if len(p.getContactPoints()) != 0:
                 print("collision at {}".format(pos))
             else:
@@ -638,6 +644,42 @@ class Oreo_Robot(object):
                                              orn_righteye[2])
         return collide, orientation_lefteye, orientation_righteye
 
+
+    def move_head_to_position_and_return_orn(self,new_pos):
+
+        """
+        :param new_pos: 4 values: Left_Eye_Left_Actuator, Left_Eye_Right_Actuator, Right_Eye_Left_Actuator,
+        Right_Eye_Right_Actuator
+        :return: Number of collisions, Left_eye_orientation, Right_eye_orientation
+        """
+        pos = [0] * self.actJointNum
+        pos[0] = new_pos[0]     # head yaw
+        pos[1] = new_pos[1]     # head pitch
+
+
+
+        if self.useRealTime == False:
+            p.setTimeStep(self.TIME_STEP)
+            self.ControlActJoints(pos)
+            for _ in range(100):
+                p.stepSimulation()
+        else:
+            self.ControlActJoints(pos)
+            time.sleep(0.1)
+        self.actJointPos = pos
+        #collide = len(p.getContactPoints())
+
+        orn_lefteye = self.GetLinkOrientationWCS("left_eye_joint")
+        #orn_lefteye = self.GetLinkOrientation("left_eye_joint")
+        # convert to numpy quaternion (w,x,y,z) w is the real part.
+        orientation_lefteye = np.quaternion(orn_lefteye[3], orn_lefteye[0], orn_lefteye[1], orn_lefteye[2])
+        # Right eye
+        orn_righteye = self.GetLinkOrientationWCS("right_eye_joint")  # as a list in [x,y,z,w] order
+        #orn_righteye = self.GetLinkOrientation("right_eye_joint")  # as a list in [x,y,z,w] order
+        # convert to numpy array quaternion (w,x,y,z) - w is the real part
+        orientation_righteye = np.quaternion(orn_righteye[3], orn_righteye[0], orn_righteye[1],
+                                             orn_righteye[2])
+        return collide, orientation_lefteye, orientation_righteye
 
     # final_pose
     def final_pose(self):

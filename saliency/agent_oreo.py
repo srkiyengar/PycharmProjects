@@ -10,6 +10,7 @@ import pickle
 from datetime import datetime
 import saliency
 import matplotlib.pyplot as plt
+from habitat_sim.utils import viz_utils as vut
 
 
 
@@ -20,10 +21,35 @@ sensor_resolution = [512,512]
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 
 dest_folder = "/Users/rajan/PycharmProjects/saliency/saliency_map"
+smooth_results = "/Users/rajan/PycharmProjects/saliency/smooth_results"
+
+
+
+
+
 scene = "../multi_agent/data_files/van-gogh-room.glb"
 physics_config_file = "../multi_agent/data_files/default.physics_config.json"
 #scene = "../multi_agent/data_files/skokloster-castle.glb"
 pyBfolder = "/Users/rajan/mytest/"
+
+
+def read_file(somefilename):
+    try:
+        with open(somefilename, "rb") as f:
+            data = pickle.load(f)
+            return data
+    except IOError as e:
+        print("Failure: Loading pickle file {}".format(somefilename))
+        return None
+
+def write_file(somefilename, info):
+    try:
+        with open(somefilename, "wb") as f:
+            pickle.dump(info, f)
+            return somefilename
+    except:
+        print(f"Failure: To save saliency file {somefilename}")
+        return None
 
 
 def homogenous_transform(R, vect):
@@ -110,14 +136,14 @@ def compute_eye_saccade_from_PyBframe(eye_rot):
     return (R_HA_to_PyB * eye_rot) * R_PyB_to_HA
 
 
-def display_single_frame(frame, num):
+def display_single_frame(num, frame):
 
     # cv2.imshow require BGR using img = img[..., ::-1]
 
     my_frame = frame[..., 0:3][..., ::-1]
     cv2.imshow(str(num), my_frame)
     return
-
+"""
 def display_image(images, left=True, right=True, left_right=True):
 
     a = len(images)
@@ -147,6 +173,7 @@ def display_image(images, left=True, right=True, left_right=True):
 
     return
 
+"""
 
 mouseX = None
 mouseY = None
@@ -251,6 +278,26 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, focal_dista
         return new_list
 
 
+def save_frames(curr_frames, start_frame=0, my_name="moving_object_frames"):
+    ''':param curr_frames - list of consecutive frames
+    :param  start_frame is a lis frames that you want to save
+    :param filename - directory path is in smooth_results and should not be provided.
+    saved as list of list. inner lists are 0) frame numbers and 1) frames
+    '''
+
+    file_name = smooth_results + "/" + my_name
+    output = []
+    selected_frames = []
+    frame_numbers = []
+    for i,j in enumerate(curr_frames):
+        if i >= start_frame:
+            selected_frames.append(j)
+            frame_numbers.append(i)
+    output.append(frame_numbers)
+    output.append(selected_frames)
+    return write_file(file_name,output)
+
+
 class agent_oreo(object):
     # constructor
     def __init__(self, scene, result_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False, phys=False):
@@ -266,6 +313,7 @@ class agent_oreo(object):
         self.left_sensor.position = [-eye_separation / 2, 0.0, 0.0]
         self.left_sensor.orientation = np.array([0.0,0.0,0.0], dtype=float)
         self.left_sensor.far = 256
+        #self.left_sensor.hfov = 75   #default is 90
 
 
         # Right sensor - # oreo perspective - staring at -ive z
@@ -284,7 +332,8 @@ class agent_oreo(object):
             self.num_sensors = 3
             self.depth_sensor = habitat_sim.CameraSensorSpec()
             #self.depth_sensor = habitat_sim.SensorSpec()
-            self.depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
+            #self.depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
+            self.depth_sensor.sensor_type = habitat_sim.SensorType.COLOR  #for testing cyclopean view
             self.depth_sensor.resolution = sensor_resolution
             self.depth_sensor.uuid = "depth_sensor"
             if loc_depth_cam == 'l':
@@ -374,9 +423,15 @@ class agent_oreo(object):
         new_agent_state.rotation = new_state[0]
         new_agent_state.position = new_state[1]
         new_agent_state.sensor_states["left_rgb_sensor"].rotation = new_state[2]
-        new_agent_state.sensor_states["left_rgb_sensor"].position = new_state[1]
+        baseline_offset = np.array([eye_separation/2, 0, 0])
+        new_agent_state.sensor_states["left_rgb_sensor"].position = new_state[1] - baseline_offset
         new_agent_state.sensor_states["right_rgb_sensor"].rotation = new_state[3]
-        new_agent_state.sensor_states["right_rgb_sensor"].position = new_state[1]
+        new_agent_state.sensor_states["right_rgb_sensor"].position = new_state[1] + baseline_offset
+
+        if self.num_sensors == 3:
+            new_agent_state.sensor_states["depth_sensor"].rotation = new_state[0]
+            new_agent_state.sensor_states["depth_sensor"].position = new_state[1]
+
         return new_agent_state
 
     def set_and_capture_depth(self,agent_info):
@@ -490,6 +545,44 @@ class agent_oreo(object):
         else:
             print(f"Invalid head neck rotation. No rotation performed")
 
+
+    def rotate_head_neck_primary_position(self, rot_quat):
+        """
+        rot_quat: rotation in quaternion of the head/neck with respect to it current orientation.
+        oreo_py: The oreo pybullet simulation object. Use this function to rotate the head neck
+        of the robot head. Since Habitatai does not distinguish between body and head_neck movement
+        of the agent, it is tracked separately.
+        There is limit on the range of head/neck movement whereas Agent body can rotate.
+        To apply the limit, it needs to be tracked separately.
+        primary position means the two eyes are looking parallel in the direction pointed by the head-nose
+        """
+
+        new_headneck_orn = self.agent_head_neck_rotation * rot_quat
+        # keep track of the head_neck position after the rot.
+        self.agent_head_neck_rotation = new_headneck_orn
+        zaxis = quaternion.as_rotation_matrix(new_headneck_orn)[:, 2]
+        y,p =self.compute_yaw_pitch_in_habitat_frame(-zaxis)
+        print(f"Head Neck Orientation Yaw = {y} Pitch = {p}")
+        result = self.pybullet_sim.is_valid_head_neck_rotation(new_headneck_orn)
+        if result == 1 or result == 0:
+            current_agent_state = self.agent.get_state()
+            current_agent_state.rotation = current_agent_state.rotation*rot_quat
+            # set sensor states to primary position
+            current_agent_state.sensor_states["left_rgb_sensor"].rotation = \
+                current_agent_state.rotation
+            current_agent_state.sensor_states["right_rgb_sensor"].rotation = \
+                current_agent_state.rotation
+
+            if self.num_sensors == 3:
+                current_agent_state.sensor_states["depth_sensor"].rotation = \
+                    current_agent_state.rotation
+
+            self.agent.set_state(current_agent_state, infer_sensor_states=False)
+            #self.my_images = self.get_sensor_observations()
+        else:
+            print(f"Invalid head neck rotation. No rotation performed")
+
+
     def get_agent_rotation(self):
         ''' return the agent body rotation by removing the head/neck rotation from the agent rotation '''
         my_agent_state = self.agent.get_state()
@@ -550,6 +643,27 @@ class agent_oreo(object):
         agent_state.sensor_states["right_rgb_sensor"].rotation = agent_orn * sensors_rotation[1]
         if self.num_sensors ==3:
             agent_state.sensor_states["depth_sensor"].rotation = agent_orn * sensors_rotation[2]
+
+        self.agent.set_state(agent_state, infer_sensor_states=False)
+        self.my_images = self.get_sensor_observations()
+        return
+
+
+    def rotate_sensor_to_align_with_agent(self):
+        """
+        The agent position or orientation is unchanged.
+        :param sensors_rotation: list of quaternions that specify rotation of sensor camera wrt agent frame
+        :return: nothing
+        The sensor_states within agent states keep the rotation of sensors wrt habitat frame.
+        The relative rotation of the sensor wrt to agent is under protected '_sensor'
+        which is modified when infer_sensor_states=False
+        """
+        agent_state = self.agent.get_state()
+        agent_orn = agent_state.rotation
+        agent_state.sensor_states["left_rgb_sensor"].rotation = agent_orn
+        agent_state.sensor_states["right_rgb_sensor"].rotation = agent_orn
+        if self.num_sensors ==3:
+            agent_state.sensor_states["depth_sensor"].rotation = agent_orn
 
         self.agent.set_state(agent_state, infer_sensor_states=False)
         self.my_images = self.get_sensor_observations()
@@ -629,19 +743,31 @@ class agent_oreo(object):
         self.my_images = self.get_sensor_observations()
 
 
-    def insert_rigid_object_easy(self, pos =[1.50, 1.0, 1.5]):
+    def insert_rigid_sphere(self, pos =[0.10, 0.15, -0.5]):
         my_sim = self.sim
         #prim_templates_mgr = my_sim.get_asset_template_manager()
         obj_templates_mgr = my_sim.get_object_template_manager()
         sphere_template_id = obj_templates_mgr.load_configs("../multi_agent/data_files/test_assets/objects/sphere")[0]
         # sphere_template.scale = np.array([0.5, 0.5, 0.5])
-        #object_lib_size = my_sim.get_physics_object_library_size()
-        #print(f"Object library size {object_lib_size}")
         id_1 = my_sim.add_object(sphere_template_id)
+        # sphere_template.scale = np.array([0.5, 0.5, 0.5])
         pos = np.array(pos)
         my_sim.set_translation(pos, id_1)
         return id_1
-        pass
+
+
+    def insert_donut(self,
+                conf_file = "../multi_agent/data_files/test_assets/objects/donut", pos =[0.10, 0.15, -0.5]):
+        my_sim = self.sim
+        #prim_templates_mgr = my_sim.get_asset_template_manager()
+        obj_templates_mgr = my_sim.get_object_template_manager()
+        donut_template_id = obj_templates_mgr.load_configs(conf_file)[0]
+        id_1 = my_sim.add_object(donut_template_id)
+        pos = np.array(pos)
+        my_sim.set_translation(pos, id_1)
+        self.my_images = self.get_sensor_observations()
+        return id_1
+
 
     def insert_rigid_object(self, sample = "sphere"):
         my_sim = self.sim
@@ -660,9 +786,6 @@ class agent_oreo(object):
         pass
 
 
-
-
-
     def simulate_motion(self, dt=2.0, get_frames=True):
 
         my_frames = []
@@ -674,8 +797,8 @@ class agent_oreo(object):
             if get_frames:
                 print(f"Inside simulation {i}")
                 self.my_images = self.get_sensor_observations()
-                display_image(oreo_in_habitat.my_images)
-                my_frames.append(self.my_images)
+                self.display()
+                my_frames.append(self.my_images["left_rgb_sensor"])
                 i += 1
         return my_frames
 
@@ -704,6 +827,42 @@ class agent_oreo(object):
         yval = (self.left_sensor.resolution[1] / 2) - yt  # height
         return xval, yval
 
+    def compute_yaw_pitch_in_habitat_frame(self,my_vec):
+
+        ux = my_vec[0]
+        uy = my_vec[1]
+        uz = my_vec[2]
+        beta = math.asin(uy)
+        beta_degrees = math.degrees(beta)
+        beta_PyB = 90 - beta_degrees
+
+        uxz =np.sqrt(ux*ux + uz*uz)
+        alpha = -math.asin(ux/uxz)
+        alpha_degrees = math.degrees(alpha)
+        return alpha_degrees, beta_PyB
+
+    def compute_new_head_rotation(self, vec_wrt_head):
+
+        current_state = self.get_current_state()
+        current_agent_rotation = current_state.rotation
+        head_neck_orn_matrix = quaternion.as_rotation_matrix(current_agent_rotation)
+        v2 = head_neck_orn_matrix.dot(vec_wrt_head.T)
+        v1 = -head_neck_orn_matrix[:, 2]
+
+        # The head is pointed towards -z which is -(unit vector of the Agent rotation
+        head_angle = np.arccos(np.dot(v1, v2))  # Angle of rotation for axis-angle representation
+        head_axis = np.cross(v1, v2)
+        head_rot = quaternion.from_rotation_vector(head_angle*head_axis)
+        return head_rot
+
+    def compute_new_head_rotation_from_yaw_pitch(self,alpha,beta):
+
+        qy = np.array([0,alpha,0])
+        quat1 = quaternion.from_rotation_vector(qy)
+        qx = np.array([beta,0,0])
+        quat2 = quaternion.from_rotation_vector(qx)
+        my_quat =quat1*quat2
+        return my_quat
 
     def saccade_to_new_point(self, xLeft, yLeft, xRight, yRight):
         """
@@ -732,15 +891,17 @@ class agent_oreo(object):
         Get the yaw and pitch.
         '''
 
-
         # Left
         new_dir_left_sensorframe = self.compute_uvector_for_image_point(xLeft, yLeft)
         rotation_agent_to_leftsensor = \
             quaternion.as_rotation_matrix(r1_inv * my_agent_state.sensor_states["left_rgb_sensor"].rotation)
         #print(f"Left Sensor Rotation{my_agent_state.sensor_states['left_rgb_sensor'].rotation}")
         new_dir_leftsensor_wrt_agentframe = rotation_agent_to_leftsensor.dot(new_dir_left_sensorframe.T)
+        #alp, bet = self.compute_yaw_pitch_in_habitat_frame(new_dir_leftsensor_wrt_agentframe)
+        #print(f"Computed yawL = {alp}, pitchL = {bet}")
         new_dir_left_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_leftsensor_wrt_agentframe.T)
         yaw_lefteye_pyB, pitchlefteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_left_pyBframe)
+        print(f"Points in Left Eye Image x = {xLeft} and y = {yLeft}")
         print(f"Desire to move to yawL = {yaw_lefteye_pyB}, pitchL = {pitchlefteye_pyB}")
 
         # Right
@@ -751,12 +912,15 @@ class agent_oreo(object):
         new_dir_rightsensor_wrt_agentframe = rotation_agent_to_rightsensor.dot(new_dir_right_sensorframe.T)
         new_dir_right_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_rightsensor_wrt_agentframe.T)
         yaw_righteye_pyB, pitchrighteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_right_pyBframe )
+        print(f"Points in Right Eye Image x = {xRight} and y = {yRight}")
         print(f"Desire to move to yawR = {yaw_righteye_pyB}, pitchR = {pitchrighteye_pyB}")
-        result = self.pybullet_sim.is_valid_saccade([yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB])
+        my_eyes_yaw_pitch = [yaw_lefteye_pyB, pitchlefteye_pyB,yaw_righteye_pyB, pitchrighteye_pyB]
+        result = self.pybullet_sim.is_valid_saccade(my_eyes_yaw_pitch)
+
         if result[0] == 1:
-            print("Moving Sensors to new position")
             leftSensorRotation_wrt_agent = result[1]
             rightSensorRotation_wrt_agent = result[2]
+            print(f"Moving Sensors to new position")
             self.rotate_sensor_absolute_wrt_agent(
                     [leftSensorRotation_wrt_agent, rightSensorRotation_wrt_agent,leftSensorRotation_wrt_agent])
             my_agent_state = self.agent.get_state()
@@ -775,11 +939,144 @@ class agent_oreo(object):
             print(f"After rotation Right Eye yaw = {yr} pitch = {pr}")
             return 1
         elif result[0] == 0:
-            print("Not Moving Sensors to new position")
-            return 0
-            # Add head neck movement to move the Agent frame to the new point
+            # Obtain head neck orn to point the head in the direction of the new point
 
+            head_orn, righeye_Ry, agent_yaw, agent_pitch, z_depth = \
+                self.get_head_neck_rotation_from_eyes_yaw_pitch(my_eyes_yaw_pitch)
+            print(f"Cannot eye saccade - Rotating head-neck yaw = {agent_yaw}, pitch = {agent_pitch}")
+            self.rotate_head_neck_primary_position(head_orn)
+            righteye_orn = quaternion.from_rotation_vector([0.0, righeye_Ry, 0.0])
+            lefteye_orn = quaternion.from_rotation_vector([0.0, -righeye_Ry, 0.0])
+            sensor_rotations = [lefteye_orn, righteye_orn, righteye_orn]
+            # rotation right eye with respect tp y-axis by righteye_Ry, lefteye by -righteye_RY
+            #self.rotate_sensors_wrt_to_current_sensor_pose(sensor_rotations)
+            '''
+            nrow = 1
+            ncol = 3
+            fig4, ax = plt.subplots(nrow, ncol)
+            ax[0].imshow(self.my_images["left_rgb_sensor"][..., 0:3])
+            ax[1].imshow(self.my_images["right_rgb_sensor"][..., 0:3])
+            ax[2].imshow(self.my_images["depth_sensor"][..., 0:3])
+            '''
+            return 1
 
+    def head_saccade_to_new_point(self, xLeft, yLeft, xRight, yRight):
+        """
+
+        :param xLeft: x position in pixels of Left sensor frame with 0,0 at top left
+        :param yLeft: y position in pixels of Left sensor frame with 0,0 at top left
+        :param xRight: x position in pixels of Right Sensor frame with 0,0 at top left
+        :param yRight: y position in pixels of Right Sensor frame with 0,0 at top left
+        :param oreo_pyb_sim: An Oreo_Pybullet_Sim object that can confirm the eye head movements
+        :return: 1 and rotates the sensor if it is within range or a 0
+        """
+        my_agent_state = self.agent.get_state()
+        r1 = my_agent_state.rotation  # Agent rotation wrt Habitat frame
+        t1 = my_agent_state.position  # Agent translation wrt Habitat frame
+        h1 = homogenous_transform(quaternion.as_rotation_matrix(r1), t1.tolist())
+        h1_inv = inverse_homogenous_transform(h1)
+        r1_inv = quaternion.from_rotation_matrix(h1_inv[0:3, 0:3])
+
+        print(f"Agent Rotation {r1}")
+        '''
+        Obtain the yaw and pitch for the proposed direction for the Sensor wrt to Agent Frame.
+        Determine the rotation wrt to current sensor orn. Then extract the orn wrt to agent.
+        This gives the rotation from agent to new sensor position.
+        Compute the uvector pointing in the new sensor direction wrt agent frame
+        Get the yaw and pitch.
+        '''
+
+        # Left
+        new_dir_left_sensorframe = self.compute_uvector_for_image_point(xLeft, yLeft)
+        rotation_agent_to_leftsensor = \
+            quaternion.as_rotation_matrix(r1_inv * my_agent_state.sensor_states["left_rgb_sensor"].rotation)
+        # print(f"Left Sensor Rotation{my_agent_state.sensor_states['left_rgb_sensor'].rotation}")
+        new_dir_leftsensor_wrt_agentframe = rotation_agent_to_leftsensor.dot(new_dir_left_sensorframe.T)
+        # alp, bet = self.compute_yaw_pitch_in_habitat_frame(new_dir_leftsensor_wrt_agentframe)
+        # print(f"Computed yawL = {alp}, pitchL = {bet}")
+        new_dir_left_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_leftsensor_wrt_agentframe.T)
+        yaw_lefteye_pyB, pitchlefteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_left_pyBframe)
+        #print(f"Points in Left Eye Image x = {xLeft} and y = {yLeft}")
+        print(f"Desire to move to yawL = {yaw_lefteye_pyB}, pitchL = {pitchlefteye_pyB}")
+
+        # Right
+        new_dir_right_sensorframe = self.compute_uvector_for_image_point(xRight, yRight)
+        rotation_agent_to_rightsensor = \
+            quaternion.as_rotation_matrix(r1_inv * my_agent_state.sensor_states["right_rgb_sensor"].rotation)
+        # print(f"Right Sensor Rotation{my_agent_state.sensor_states['right_rgb_sensor'].rotation}")
+        new_dir_rightsensor_wrt_agentframe = rotation_agent_to_rightsensor.dot(new_dir_right_sensorframe.T)
+        new_dir_right_pyBframe = rotatation_matrix_from_Pybullet_to_Habitat().dot(new_dir_rightsensor_wrt_agentframe.T)
+        yaw_righteye_pyB, pitchrighteye_pyB = oreo.compute_yaw_pitch_from_vector(new_dir_right_pyBframe)
+        #print(f"Points in Right Eye Image x = {xRight} and y = {yRight}")
+        print(f"Desire to move to yawR = {yaw_righteye_pyB}, pitchR = {pitchrighteye_pyB}")
+        my_eyes_yaw_pitch = [yaw_lefteye_pyB, pitchlefteye_pyB, yaw_righteye_pyB, pitchrighteye_pyB]
+
+        # Obtain head neck orn to point the head in the direction of the new point
+
+        head_orn, righeye_Ry, agent_yaw, agent_pitch, z_depth = \
+            self.get_head_neck_rotation_from_eyes_yaw_pitch(my_eyes_yaw_pitch)
+        print(f"Head rotation-saccade: rotating head-neck yaw = {agent_yaw}, pitch = {agent_pitch}")
+        self.rotate_head_neck_primary_position(head_orn)
+        righteye_orn = quaternion.from_rotation_vector([0.0, righeye_Ry, 0.0])
+        lefteye_orn = quaternion.from_rotation_vector([0.0, -righeye_Ry, 0.0])
+        sensor_rotations = [lefteye_orn, righteye_orn, righteye_orn]
+        return 1
+
+    def get_head_neck_rotation_from_eyes_yaw_pitch(self,yp):
+        """:yp - list [Left sensor yaw , Left sensor pitch, Right sensor yaw, Right sensor pitch]
+            angles are in degrees
+            returns yaw pitch for head-neck in radians.
+            returns z in the same dimension as eye-separation
+        """
+        lefteye_yaw = math.radians(yp[0])
+        lefteye_pitch = 90.0-yp[1]
+        righteye_yaw = math.radians(yp[2])
+        # righteye_pitch = math.radians((90.0-yp[3]))
+
+        lefteye_tan_alpha = math.tan(lefteye_yaw)
+        righteye_tan_alpha = math.tan(righteye_yaw)
+        lefteye_pitch_rad = math.radians(lefteye_pitch)
+        lefteye_sin_beta = math.sin(lefteye_pitch_rad)
+
+        head_yaw = math.atan(0.5*(lefteye_tan_alpha+righteye_tan_alpha))
+        head_yaw_cos_alpha = math.cos(head_yaw)
+        head_yaw_sin_alpha = math.sin(head_yaw)
+
+        z_length = abs(eye_separation/(righteye_tan_alpha-lefteye_tan_alpha))
+        z_fixation = -z_length # camera is looking at -z
+
+        # using +ive value for the distance from origin to the point in xz plane
+        # when y and rho1 are +ive beta will be +ive CCW - rotation wrt x
+        # when y is negative and rho1 is +ive beta will be +ive - CW rotation wrt x
+        rho1 = z_length/head_yaw_cos_alpha
+        temp_calc = eye_separation/(2*rho1)
+        sinbeta = (lefteye_sin_beta/lefteye_tan_alpha)*(head_yaw_sin_alpha - temp_calc)
+        head_pitch = math.asin(sinbeta)
+        head_pitch_PyB_deg = 90.0 - math.degrees(head_pitch)
+        head_yaw_deg = math.degrees(head_yaw)      # head yaw wrt to x in PyB is the same wrt -z in Habitat frame
+        print(f"Computed Head Yaw = {head_yaw_deg}, Head Pitch = {head_pitch_PyB_deg}")
+
+        neck_quat = self.compute_new_head_rotation_from_yaw_pitch(head_yaw, head_pitch)
+        # Keeping head yaw and pitch in radians and NOT converting head_pitch to PyB convention
+        #uy = lefteye_sin_beta
+        uy = sinbeta
+        uxz = math.sqrt(1 - uy*uy)      # uxz is the positive root from sqrt operation
+        ux = -uxz*head_yaw_sin_alpha    # when sin_alpha is negative, ux will be positive and vice versa
+        uz = -uxz*head_yaw_cos_alpha
+        uvalue = math.sqrt(ux*ux + uy*uy + uz*uz)
+        #print(f"Head to move in the direction U = [{ux}, {uy}, {uz}], unit vector magnitude {uvalue}")
+
+        # We have vector v2 (ux,uy,uz) wrt to the current agent(head) axis
+        v2 = np.array([ux,uy,uz])
+        #zaxis = -quaternion.as_rotation_matrix(neck_quat)[:, 2]
+        #head_rot_quat = self.compute_new_head_rotation(v2) # not sure why this is not correct
+        fixation_point = rho1*v2            # point
+        #print(f"New fixation point = {fixation_point}")
+        eye_hypot = math.sqrt((rho1*rho1) + (eye_separation*eye_separation/4))
+        eye_Ry_angle = math.acos(rho1/eye_hypot)
+        temp = math.degrees(eye_Ry_angle)
+        tmp1 = math.atan(129/29)
+        return neck_quat, eye_Ry_angle, head_yaw_deg, head_pitch_PyB_deg, z_fixation
 
     def get_sensor_observations(self):
         """
@@ -794,6 +1091,9 @@ class agent_oreo(object):
         observations = {}
         for sensor_uuid, sensor in self.sim._sensors.items():
             observations[sensor_uuid] = sensor.get_observation()
+
+        return observations
+        '''
         rgb_left = observations["left_rgb_sensor"]
         rgb_right = observations["right_rgb_sensor"]
 
@@ -802,7 +1102,7 @@ class agent_oreo(object):
             return rgb_left, rgb_right, depth
         else:
             return rgb_left, rgb_right
-
+        '''
 
     def save_both_views(self,image_filename):
 
@@ -817,7 +1117,8 @@ class agent_oreo(object):
         output.append(self.left_sensor.resolution)
         output.append(self.left_sensor_hfov)
         output.append(self.focal_distance)
-        images = self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]
+        images = self.my_images["left_rgb_sensor"][..., 0:3], self.my_images["right_rgb_sensor"][..., 0:3]
+        #images = self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]
         output.append(images)           # Left and Right RGB images
 
         self.start_image_filenameRGB = image_filename + "RGB"
@@ -857,7 +1158,8 @@ class agent_oreo(object):
         output.append(self.left_sensor.resolution)
         output.append(self.left_sensor_hfov)
         output.append(self.focal_distance)
-        images = self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]
+        images = self.my_images["left_rgb_sensor"][..., 0:3], self.my_images["right_rgb_sensor"][..., 0:3]
+        #images = self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]
         output.append(images)           # Left and Right RGB images
 
         self.start_image_filenameRGB = image_filename + "RGB0"
@@ -1179,8 +1481,8 @@ class agent_oreo(object):
         '''
         :param orn_info: agent and sensor states
         :type : list agent-rotation is [0], agent-position is [1], left sensor rot [2] and right sensor rot is [3]
-        :param image_points: left and right row columns
-        :type img_num: list[[r,c]-left, [r,c]-right]
+        :param left_p, right_p: Moving left and right sensors to new r,c
+        :type : (r,c)
         :return: right and left images concatenated
         :rtype: ndarray
         '''
@@ -1192,26 +1494,101 @@ class agent_oreo(object):
 
         self.restore_state(self.setup_agent_state(orn_info))
         # column value is x or width, row value is y or height
-        success = self.saccade_to_new_point(lcol, lrow, rcol, rrow)
+        #success = self.saccade_to_new_point(lcol, lrow, rcol, rrow)
+        success = self.head_saccade_to_new_point(lcol, lrow, rcol, rrow)
+
         if success == 1:
-            return [self.my_images[0][..., 0:3], self.my_images[1][..., 0:3]],\
-                   self.get_current_state(),self.focal_distance
+            self.my_images = self.get_sensor_observations()
+            return self.my_images, self.get_current_state(), self.focal_distance
             #return np.concatenate((self.my_images[0],self.my_images[1]),axis=1)
         else:
             print(f"Unsuccessful in moving to left [{lrow},{lcol}] and right [{rrow},{rcol}]")
             return None, None, None
 
 
-    def print_agent_leftsensor_pos_orn(self):
+    def print_agent_leftsensor_pos_orn(self, message):
 
         my_agent_state = self.agent.get_state()
         agent_rot_axis_angle = quaternion.as_rotation_vector(my_agent_state.rotation)
         left_sensor_axis_angle = \
             np.rad2deg(quaternion.as_rotation_vector(my_agent_state.sensor_states['left_rgb_sensor'].rotation))
         left_sensor_pos = my_agent_state.sensor_states['left_rgb_sensor'].position
+        print(f"{message}")
         print(f"Agent rotation = {agent_rot_axis_angle}\nAgent position = {my_agent_state.position}\n"
-              f"Left sensor rotation = {left_sensor_axis_angle}"
+              f"Left sensor rotation = {left_sensor_axis_angle}\n"
               f"Left sensor position = {left_sensor_pos}")
+
+
+    def convert_location_to_WCS_frame(self, point_in_sensor_frame=np.array([2.0, 0.1, -5.0]), which_sensor = "left"):
+
+        '''
+        given an x,y,z location w.r.t. the left of right sensor frame, it returns the xyz location
+        wrt habitat frame (not agent frame).
+        '''
+        a_state = self.agent.get_state()
+        if which_sensor == "right":
+            sensor_rot = a_state.sensor_states['right_rgb_sensor'].rotation
+            sensor_pos = a_state.sensor_states['right_rgb_sensor'].position
+        else:
+            sensor_rot = a_state.sensor_states['left_rgb_sensor'].rotation
+            sensor_pos = a_state.sensor_states['left_rgb_sensor'].position
+
+        h_mat = homogenous_transform(quaternion.as_rotation_matrix(sensor_rot), sensor_pos.tolist())
+
+        pt_in_WCS = h_mat.dot(np.append(point_in_sensor_frame,[1.0]))[0:3]
+        #print(f"Object point in WCS{pt_in_WCS}")
+        return pt_in_WCS
+
+    def explore_simulation(self, offset=np.array([0, 0.1, -0.5]), orientation=np.quaternion(1,0,0,0)):
+
+        agent_transform = self.agent.scene_node.transformation_matrix()
+        ob_translation = agent_transform.transform_point(offset)
+
+        a_state = self.agent.get_state()
+        r1 = a_state.rotation  # Agent rotation wrt Habitat frame
+        t1 = a_state.position  # Agent translation wrt Habitat frame
+        h1 = homogenous_transform(quaternion.as_rotation_matrix(r1), t1.tolist())
+        #h1_inv = inverse_homogenous_transform(h1)
+        #r1_inv = quaternion.from_rotation_matrix(h1_inv[0:3, 0:3])
+        return
+
+    def display(self, left=True, right=True, left_right=True):
+
+        if self.num_sensors == 2:
+            images = self.my_images["left_rgb_sensor"], self.my_images["right_rgb_sensor"]
+        else:
+            images = self.my_images["left_rgb_sensor"], self.my_images["right_rgb_sensor"],self.my_images["depth_sensor"]
+
+
+        a = len(images)
+        left_img = images[0]
+        right_img = images[1]
+
+        # cv2.imshow require BGR using img = img[..., ::-1] -- ... is called ellipse in Python ignores all e
+        # left_img[..., 0:3] 3 layers RGB [..., ::-1] flips the last
+        # Together it could also be written as [:,:,::-1]
+
+        left_img = left_img[..., 0:3][..., ::-1]
+        right_img = right_img[..., 0:3][..., ::-1]
+
+        if left_right:
+            cv2.imshow("Left-Right", np.concatenate((left_img, right_img), axis=1))
+        else:
+            if a == 2:
+                if left:
+                    cv2.imshow("Left_eye", left_img)
+                    # get_image_patch(images[0],256,256,50)
+                if right:
+                    cv2.imshow("Right_eye", right_img)
+            elif a == 3:
+                if left:
+                    cv2.imshow("Left_eye", left_img)
+                if right:
+                    cv2.imshow("Right_eye", right_img)
+                cv2.imshow("Depth", images[2] / 10)
+
+        return
+
 
 
 class OreoPyBulletSim(object):
@@ -1268,7 +1645,8 @@ class OreoPyBulletSim(object):
         z_axis = -head_neck_orn_matrix[:, 2]
         view_direction = rotatation_matrix_from_Pybullet_to_Habitat().dot(z_axis.T)
         yaw_headneck_pyB, pitch_headneck_pyB = oreo.compute_yaw_pitch_from_vector(view_direction)
-        if -90 < yaw_headneck_pyB < 90 and 35 < pitch_headneck_pyB < 160:
+        print(f"Headneck yaw {yaw_headneck_pyB} and pitch {pitch_headneck_pyB}")
+        if -90 < yaw_headneck_pyB < 90 and 34 < pitch_headneck_pyB < 160:
             return 1
         else:
             print(f"Out of range either yaw {yaw_headneck_pyB} or pitch {pitch_headneck_pyB}")
@@ -1281,41 +1659,49 @@ if __name__ == "__main__":
 
     oreo_in_habitat = agent_oreo(scene, dest_folder, pyBfolder, depth_camera=False, loc_depth_cam = 'c', foveation=False, phys=True)
     #oreo_in_habitat.insert_rigid_object()
-    my_obj = oreo_in_habitat.insert_rigid_object_easy()
+    #my_obj = oreo_in_habitat.insert_rigid_sphere()
     #oreo_in_habitat.insert_rigid_object_easy(pos = [.50, 0.6, 1.0])
     #oreo_in_habitat.simulate_motion()
     delta_move = 0.1
     ang_quat = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, 2*np.pi/36,0.0])
-    delta_ang_cw = quaternion.from_rotation_vector([0.0, -2*np.pi/36, 0.0])
+    ang_in_degrees = 10
+    ang_in_rad = 10*np.pi/180
+    delta_ang_ccw  = quaternion.from_rotation_vector([0.0, ang_in_rad,0.0])
+    delta_ang_cw = quaternion.from_rotation_vector([0.0, -ang_in_rad, 0.0])
     w = sensor_resolution[0]
     h = sensor_resolution[1]
     left = 1
     right = 1
     image_number = 0
-    display_image(oreo_in_habitat.my_images)
-    cv2.setMouseCallback('Left_eye', get_mouse_2click)
+    oreo_in_habitat.display()
+    #cv2.setMouseCallback('Left_eye', get_mouse_2click)
 
-    move_step = np.array([0.0, 0.002, 0.002])
-    move_count = 0
-    pos = np.array([.50, 0.6, 1.0])
+
+    #pos = np.array([.50, 0.6, 1.0])
     simulate = False
+    dtime = 0
+    once = False
     start_time = oreo_in_habitat.sim.get_world_time()
-    dtime = 0.0
-    frames = []
+    obs = []
+    k = 0
+
     while (1):
         curr_time = oreo_in_habitat.sim.get_world_time()
         if simulate is True:
+            if once:
+                initial_pos = [-0.10, 0.1, -0.5]  # with respect to eye-sensor
+                my_pos = oreo_in_habitat.convert_location_to_WCS_frame(point_in_sensor_frame=initial_pos)
+                my_obj = oreo_in_habitat.insert_donut(pos=my_pos)
+                once = False
             if (curr_time < (start_time+dtime)):     #start_time, dtime has to be set when simulate is set to True
-                oreo_in_habitat.sim.step_physics(2.0 / 60.0)
+                oreo_in_habitat.sim.step_physics(1.0 / 60.0)
                 oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
-                move_count += 1
-                print(f"Simulating {move_count}")
-                frames.append(oreo_in_habitat.my_images[0])
+                obs.append(oreo_in_habitat.my_images)
+                #frames.append(oreo_in_habitat.my_images["left_rgb_sensor"][..., 0:3])
             else:
                 simulate = False
                 dtime = 0
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
         else:
             k = cv2.waitKey(0)
             if k == ord('q'):
@@ -1351,14 +1737,14 @@ if __name__ == "__main__":
                     else:
                         img_data = oreo_in_habitat.capture_images_for_fixations(p_salfile)
                         oreo_in_habitat.restore_state(robot_current_state)
-                        display_image(oreo_in_habitat.my_images)
+                        oreo_in_habitat.display()
                         continue
             elif k == ord("3"):
                 processed_dir = "/Users/rajan/PycharmProjects/saliency/saliency_map/results/"
                 filename = "van-gogh-room.glb^2021-09-26-08-58-31RGB9-sal-processed"
                 count = 9
                 oreo_in_habitat.capture_next_image_from_fixations(processed_dir, filename, count)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord("4"):
                 # take the processed saliency file to capture salient images and related information
@@ -1380,104 +1766,119 @@ if __name__ == "__main__":
                         if (image_number < 10):
                             limage = oreo_in_habitat.capture_fixation_image(p_salfile, image_number)
                             image_number += 1
-                        display_image(oreo_in_habitat.my_images)
+                        oreo_in_habitat.display()
                         continue
             elif k == ord('5'):
                 oreo_in_habitat.restore_state(robot_current_state)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('6'):  # testing capture_next_image_from_fixations_colab
                 myfile = "/Users/rajan/PycharmProjects/saliency/saliency_map/van-gogh-room.glb^2021-09-26-08-58-31RGB8-sal-processed"
                 oreo_in_habitat.capture_next_image_from_fixations_colab(myfile, num=8)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('7'):
                 simulate = True
-                dtime = 1.0
-                start_time = oreo_in_habitat.sim.get_world_time()
+                once = True
+                dtime = 0.5
+                #dtime = 1.0
+                #start_time = oreo_in_habitat.sim.get_world_time()
                 # oreo_in_habitat.simulate_motion()
                 '''
                 pos = pos + move_count * move_step
                 print(f"Red sphere position = {pos}")
                 oreo_in_habitat.sim.set_translation(pos, my_obj)
                 oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 move_count +=1
                 '''
                 continue
             elif k == ord('8'):
                 # oreo_in_habitat.simulate_motion()
-                pos = pos - move_count * move_step
-                print(f"Red sphere position = {pos}")
-                oreo_in_habitat.sim.set_translation(pos, my_obj)
-                oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
-                display_image(oreo_in_habitat.my_images)
-                move_count += 1
+                initial_pos = [.10, 0.1, -0.5]  # with respect to eye-sensor
+                my_pos = oreo_in_habitat.convert_location_to_WCS_frame(point_in_sensor_frame=initial_pos)
+                my_obj = oreo_in_habitat.insert_donut(pos=my_pos)
+                move_step = np.array([0.0005, -0.0005, -0.02])
+                move_count = 1
+                move_count_max = 30
+                while(move_count<move_count_max):
+                    next_pos = initial_pos - move_count * move_step
+                    next_pos_WCS = oreo_in_habitat.convert_location_to_WCS_frame(next_pos)
+                    oreo_in_habitat.sim.set_translation(next_pos_WCS, my_obj)
+                    oreo_in_habitat.my_images = oreo_in_habitat.get_sensor_observations()
+                    move_count += 1
+                    #frames.append(oreo_in_habitat.my_images["left_rgb_sensor"][..., 0:3])
+                    obs.append(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('n'):
                 oreo_in_habitat.reset_state()
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('f'):
                 print(f"Move forward by {delta_move}")
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, -delta_move])
-                display_image(oreo_in_habitat.my_images)
-                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                oreo_in_habitat.display()
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in z by -{delta_move}")
                 continue
             elif k == ord('b'):
                 print(f"Move backbward by {delta_move}")
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, 0.0, delta_move])
-                display_image(oreo_in_habitat.my_images)
-                oreo_in_habitat.print_agent_leftsensor_pos_orn()
+                oreo_in_habitat.display()
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in z by {delta_move}")
                 continue
             elif k == ord('u'):
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, delta_move, 0.0])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in y by {delta_move}")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('v'):
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [0.0, -delta_move, 0.0])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in y by -{delta_move}")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('s'):
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [delta_move, 0.0, 0.0])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in x by {delta_move}")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('t'):
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, [-delta_move, 0.0, 0.0])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"moving in x by -{delta_move}")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('j'):
                 # default agent position is 0.9539339  0.1917877 12.163067
                 m = [0.9539339, 0.1917877, 11.0]
                 oreo_in_habitat.move_and_rotate_agent(ang_quat, m, "absolute")
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
 
             elif k == ord('a'):
                 print("****>Rotating clockwise")
                 oreo_in_habitat.move_and_rotate_agent(delta_ang_cw, [0.0, 0.0, 0.0])
-                oreo_in_habitat.print_agent_leftsensor_pos_orn()
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"clockwise rotation around Y by {ang_in_degrees} deg.")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('c'):
                 print("---->Rotating counter-clockwise")
                 oreo_in_habitat.move_and_rotate_agent(delta_ang_ccw, [0.0, 0.0, 0.0])
-                oreo_in_habitat.print_agent_leftsensor_pos_orn()
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.print_agent_leftsensor_pos_orn(f"counter clockwise rotation around Y by {ang_in_degrees} deg.")
+                oreo_in_habitat.display()
                 continue
             elif k == ord('x'):
                 # oreo_in_habitat.reset_state()
                 dc = oreo_in_habitat.compute_uvector_for_image_point(w / 4, h / 4)
                 rot_quat = calculate_rotation_to_new_direction(dc)
                 oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('9'):
                 # oreo_in_habitat.reset_state()
                 dc = oreo_in_habitat.compute_uvector_for_image_point(3 * w / 4, 3 * h / 4)
                 rot_quat = calculate_rotation_to_new_direction(dc)
                 oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('e'):
                 oreo_in_habitat.reset_state()
@@ -1487,7 +1888,7 @@ if __name__ == "__main__":
                 next_quat = rot_quat * a
                 print(f"Quaternion {rot_quat} at 0,h/2, next quat {next_quat}, a ={a}")
                 oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('w'):
                 oreo_in_habitat.reset_state()
@@ -1495,15 +1896,15 @@ if __name__ == "__main__":
                 rot_quat = calculate_rotation_to_new_direction(dc)
                 print(f"Quaternion {rot_quat} at w,h/2")
                 oreo_in_habitat.rotate_sensors_wrt_to_current_sensor_pose([rot_quat, rot_quat, rot_quat])
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('z'):
                 oreo_in_habitat.saccade_to_new_point((w / 2) + 8, (h / 2) + 8, w / 2, h / 2)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('p'):
                 oreo_in_habitat.saccade_to_new_point((w / 2) - 8, (h / 2) - 8, w / 2, h / 2)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('l'):
                 print(f"Move Left count --{left}--")
@@ -1511,13 +1912,13 @@ if __name__ == "__main__":
                 yL = h / 2
                 oreo_in_habitat.saccade_to_new_point(xL, yL, xL, yL)
                 left += 1
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('r'):
                 print(f"Move Right count --{right}-")
                 right += 1
                 oreo_in_habitat.saccade_to_new_point((w / 2) + 8, h / 2, (w / 2) + 8, h / 2)
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('d'):
                 # oreo_in_habitat.saccade_to_new_point(w/2,(h/2)+8, w/2, (h/2)+8)
@@ -1525,30 +1926,44 @@ if __name__ == "__main__":
                 continue
             elif k == ord('y'):
                 oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, 5 * np.pi / 180, 0]))
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('x'):
                 oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([0, -5 * np.pi / 180, 0]))
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('g'):
                 oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([5 * np.pi / 180, 0, 0]))
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             elif k == ord('h'):
                 oreo_in_habitat.rotate_head_neck(quaternion.from_rotation_vector([-5 * np.pi / 180, 0, 0]))
-                display_image(oreo_in_habitat.my_images)
+                oreo_in_habitat.display()
                 continue
             else:
                 pass
 
     cv2.destroyAllWindows()
 
-    for n,i in enumerate(frames):
-        display_single_frame(i,n)
-        k = cv2.waitKey(0)
-        if k == ord('q'):
-            break
+    make_video = False
+    videofile = smooth_results + "/" + "motion tracking"
+    if make_video:
+        vut.make_video(obs,"left_rgb_sensor","color", videofile, open_vid=False)
+
+
+    frames = []
+    for i in obs:
+        frames.append(i["left_rgb_sensor"][..., 0:3])
+    fid = save_frames(frames, start_frame = 0)
+
+    frame_data = read_file(fid)     # A list of frame number list anf frame list
+    if frame_data is not None:
+        for i in zip(frame_data[0],frame_data[1]):
+            display_single_frame(i[0], i[1])
+            k = cv2.waitKey(0)
+            if k == ord('q'):
+                break
+
 
     pass
 

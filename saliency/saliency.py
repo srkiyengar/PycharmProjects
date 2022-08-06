@@ -270,7 +270,7 @@ def compute_pixel_in_current_frame(R1, R2, pixels_in_previous_frame, frame_no, f
         # calculate angles that the unit vector makes with z axis and with xz plane
         uxz = np.sqrt(ux * ux + uz * uz)
         theta = np.arcsin(ux / uxz)  # z is never zero, theta is the rotation angle about y-axis - yaw angle
-        phi = np.arcsin(uy)  # x is the angle about x - pitch angle
+        phi = np.arcsin(uy)  # the angle about y - pitch angle
 
         print(f"Theta = {np.rad2deg(theta)}, Phi = {np.rad2deg(phi)}")
         # compute x,y (z = -focal length)
